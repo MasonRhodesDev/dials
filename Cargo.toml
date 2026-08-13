@@ -1,0 +1,17 @@
+[package]
+name = "hyprstate-gui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Displays configurator for hyprstate — edit shared monitor-profiles TOML"
+repository = "https://github.com/MasonRhodesDev/hyprstate-gui"
+publish = false
+
+[dependencies]
+monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
+slint = { version = "1.17", default-features = true, features = ["backend-winit", "renderer-femtovg", "compat-1-2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+slint-build = "1.17"

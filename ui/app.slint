@@ -1,0 +1,350 @@
+// hyprstate → Displays (MVP). Canvas-first monitor profile editor.
+// UX: monitor-profiles/.plans/planning/ux_design.md
+
+import { Button, LineEdit, ScrollView, VerticalBox, HorizontalBox, CheckBox, ComboBox } from "std-widgets.slint";
+
+export struct ProfileRow {
+    name: string,
+    source: string,
+    matched: bool,
+    active: bool,
+}
+
+export struct CanvasMonitor {
+    label: string,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    selected: bool,
+    ghost: bool,
+}
+
+export component AppWindow inherits Window {
+    title: "hyprstate — Displays";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    background: #1a1b1e;
+
+    in-out property <bool> show-editor: false;
+    in-out property <string> live-signature: "";
+    in-out property <[ProfileRow]> profiles: [];
+    in-out property <string> status-text: "";
+
+    in-out property <string> editor-name: "";
+    in-out property <string> editor-source: "";
+    in-out property <string> editor-badge: "";
+    in-out property <bool> editor-dirty: false;
+    in-out property <[CanvasMonitor]> canvas-monitors: [];
+    in-out property <int> selected-index: -1;
+
+    in-out property <string> insp-label: "";
+    in-out property <[string]> insp-modes: [];
+    in-out property <int> insp-mode-index: 0;
+    in-out property <string> insp-scale: "1";
+    in-out property <string> insp-snap: "";
+    in-out property <[string]> insp-rotates: ["0°", "90°", "180°", "270°"];
+    in-out property <int> insp-rotate-index: 0;
+    in-out property <string> insp-pos-x: "0";
+    in-out property <string> insp-pos-y: "0";
+    in-out property <bool> insp-enabled: true;
+    in-out property <bool> show-advanced: false;
+    in-out property <string> insp-match: "";
+    in-out property <string> warnings: "";
+
+    callback open-profile(int);
+    callback capture-current();
+    callback back-to-list();
+    callback save-profile();
+    callback select-monitor(int);
+    callback center-to-neighbor();
+    callback insp-mode-changed(int);
+    callback insp-scale-changed(string);
+    callback insp-rotate-changed(int);
+    callback insp-pos-changed(string, string);
+    callback insp-enabled-changed(bool);
+    callback canvas-drag(int, float, float);
+
+    if !root.show-editor: VerticalBox {
+        padding: 28px;
+        spacing: 16px;
+
+        Text {
+            text: "Displays";
+            color: #f2f2f2;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        Text {
+            text: root.live-signature;
+            color: #9a9a9a;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalBox {
+                spacing: 4px;
+                for p[i] in root.profiles: Rectangle {
+                    height: 44px;
+                    border-radius: 6px;
+                    ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-profile(i); }
+                    }
+                    background: ta.has-hover ? #2a2b30 : #1a1b1e;
+
+                    HorizontalBox {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        alignment: center;
+
+                        Text {
+                            text: p.matched ? "●" : " ";
+                            color: #6cb6ff;
+                            font-size: 14px;
+                        }
+                        Text {
+                            text: p.name;
+                            color: #f2f2f2;
+                            font-size: 15px;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: p.source;
+                            color: #8a8a8a;
+                            font-size: 12px;
+                        }
+                        if p.active: Text {
+                            text: "✓";
+                            color: #7dcea0;
+                            font-size: 14px;
+                        }
+                    }
+                }
+            }
+        }
+
+        Button {
+            text: "Capture current layout…";
+            clicked => { root.capture-current(); }
+        }
+        Text {
+            text: root.status-text;
+            color: #8a8a8a;
+            font-size: 12px;
+        }
+    }
+
+    if root.show-editor: VerticalBox {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalBox {
+            spacing: 12px;
+            alignment: center;
+            Button {
+                text: "← Profiles";
+                clicked => { root.back-to-list(); }
+            }
+            VerticalBox {
+                spacing: 2px;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.editor-name;
+                    color: #f2f2f2;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.editor-badge + (root.editor-dirty ? " · Modified" : "");
+                    color: #9a9a9a;
+                    font-size: 12px;
+                }
+            }
+            Text {
+                text: root.editor-source;
+                color: #8a8a8a;
+                font-size: 12px;
+            }
+            Button {
+                text: "Save";
+                primary: true;
+                enabled: root.editor-dirty;
+                clicked => { root.save-profile(); }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            // Canvas
+            Rectangle {
+                horizontal-stretch: 3;
+                background: #121316;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: #2c2d32;
+                clip: true;
+
+                property <float> drag-start-x;
+                property <float> drag-start-y;
+                property <float> mon-start-x;
+                property <float> mon-start-y;
+                property <int> drag-index: -1;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    moved => {
+                        if (self.pressed && root.selected-index >= 0) {
+                            root.canvas-drag(
+                                root.selected-index,
+                                self.mouse-x / 1px - self.pressed-x / 1px,
+                                self.mouse-y / 1px - self.pressed-y / 1px,
+                            );
+                        }
+                    }
+                }
+
+                for m[i] in root.canvas-monitors: Rectangle {
+                    x: m.x * 1px;
+                    y: m.y * 1px;
+                    width: max(m.w * 1px, 24px);
+                    height: max(m.h * 1px, 24px);
+                    border-radius: 4px;
+                    background: m.ghost ? #2a2b3080 : (m.selected ? #2a4060 : #25262b);
+                    border-width: m.selected ? 2px : 1px;
+                    border-color: m.selected ? #6cb6ff : #3a3b40;
+
+                    Text {
+                        text: m.label;
+                        color: #e8e8e8;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    TouchArea {
+                        mouse-cursor: grab;
+                        clicked => { root.select-monitor(i); }
+                        moved => {
+                            if self.pressed {
+                                root.select-monitor(i);
+                                root.canvas-drag(
+                                    i,
+                                    self.mouse-x / 1px - self.pressed-x / 1px,
+                                    self.mouse-y / 1px - self.pressed-y / 1px,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Inspector
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 280px;
+                background: #1e1f24;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: #2c2d32;
+
+                VerticalBox {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    Text {
+                        text: root.insp-label == "" ? "Select a monitor" : root.insp-label;
+                        color: #f2f2f2;
+                        font-size: 15px;
+                        font-weight: 600;
+                    }
+
+                    Text { text: "Mode"; color: #8a8a8a; font-size: 11px; }
+                    ComboBox {
+                        model: root.insp-modes;
+                        current-index: root.insp-mode-index;
+                        selected => { root.insp-mode-changed(self.current-index); }
+                    }
+
+                    Text { text: "Scale"; color: #8a8a8a; font-size: 11px; }
+                    LineEdit {
+                        text: root.insp-scale;
+                        edited => { root.insp-scale-changed(self.text); }
+                    }
+                    if root.insp-snap != "": Text {
+                        text: root.insp-snap;
+                        color: #9a9a9a;
+                        font-size: 11px;
+                    }
+
+                    Text { text: "Rotate"; color: #8a8a8a; font-size: 11px; }
+                    ComboBox {
+                        model: root.insp-rotates;
+                        current-index: root.insp-rotate-index;
+                        selected => { root.insp-rotate-changed(self.current-index); }
+                    }
+
+                    Text { text: "Position"; color: #8a8a8a; font-size: 11px; }
+                    HorizontalBox {
+                        LineEdit {
+                            text: root.insp-pos-x;
+                            edited => { root.insp-pos-changed(self.text, root.insp-pos-y); }
+                        }
+                        LineEdit {
+                            text: root.insp-pos-y;
+                            edited => { root.insp-pos-changed(root.insp-pos-x, self.text); }
+                        }
+                    }
+
+                    Button {
+                        text: "Center to neighbor";
+                        enabled: root.selected-index >= 0;
+                        clicked => { root.center-to-neighbor(); }
+                    }
+
+                    CheckBox {
+                        text: "Enabled";
+                        checked: root.insp-enabled;
+                        toggled => { root.insp-enabled-changed(self.checked); }
+                    }
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-advanced = !root.show-advanced; }
+                        Text {
+                            text: root.show-advanced ? "▾ Match / advanced" : "▸ Match / advanced";
+                            color: #8a8a8a;
+                            font-size: 12px;
+                        }
+                    }
+                    if root.show-advanced: Text {
+                        text: root.insp-match;
+                        color: #9a9a9a;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: root.warnings;
+            color: #c9a227;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.status-text;
+            color: #8a8a8a;
+            font-size: 12px;
+        }
+    }
+}
