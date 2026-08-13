@@ -11,7 +11,8 @@ use monitor_profiles::{
     ConnectedOutput, Mode, Monitor, Profile, ResolvedOutput, match_in_signature, resolve, select,
 };
 use profiles_io::{ListedProfile, load_merged, write_atomic};
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint_kit::{apply_theme, ThemeBridge};
 
 slint::include_modules!();
 
@@ -22,7 +23,10 @@ struct EditorState {
     /// Logical positions mirrored from profile resolve (mutable while editing).
     positions: Vec<(i32, i32)>,
     drag_origin: Option<(i32, i32)>,
-    canvas_scale: f32,
+    /// Canvas-local pointer at drag start (survives tile moves).
+    drag_press_px: Option<(f32, f32)>,
+    /// Locked while dragging so fit-all reflow / model rebuild don't break the gesture.
+    view_lock: Option<canvas::CanvasView>,
 }
 
 struct AppState {
@@ -33,10 +37,21 @@ struct AppState {
     active_name: Option<String>,
     editor: Option<EditorState>,
     save_wait: Option<Instant>,
+    canvas_model: Rc<VecModel<CanvasMonitor>>,
+    canvas_w: f32,
+    canvas_h: f32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
+    let bridge = ThemeBridge::attach(ui.as_weak(), |ui, tokens| {
+        apply_theme!(ui.global::<Theme>(), tokens);
+        ui.invoke_sync_palette();
+    })?;
+    std::mem::forget(bridge);
+
+    let canvas_model = Rc::new(VecModel::from(Vec::<CanvasMonitor>::new()));
+    ui.set_canvas_monitors(ModelRc::from(canvas_model.clone()));
     let state = Rc::new(RefCell::new(AppState {
         listed: Vec::new(),
         live: Vec::new(),
@@ -45,6 +60,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         active_name: None,
         editor: None,
         save_wait: None,
+        canvas_model,
+        canvas_w: 720.0,
+        canvas_h: 520.0,
     }));
 
     refresh_list(&ui, &state);
@@ -155,6 +173,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             drag_monitor(&ui, &state, idx as usize, dx, dy);
         });
     }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_drag_end(move || {
+            end_drag(&state);
+            if let Some(ui) = ui_weak.upgrade() {
+                push_canvas(&ui, &state);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_resized(move |w, h| {
+            let ui = ui_weak.unwrap();
+            {
+                let mut st = state.borrow_mut();
+                st.canvas_w = w;
+                st.canvas_h = h;
+            }
+            if state.borrow().editor.is_some() {
+                push_canvas(&ui, &state);
+            }
+        });
+    }
 
     // Poll after save for session convergence.
     let ui_weak = ui.as_weak();
@@ -261,7 +304,8 @@ fn open_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
         selected: 0,
         positions,
         drag_origin: None,
-        canvas_scale: 1.0,
+        drag_press_px: None,
+        view_lock: None,
     });
     drop(st);
     push_canvas(ui, state);
@@ -330,15 +374,19 @@ fn short_label(output: &str) -> String {
 fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let mut st = state.borrow_mut();
     let outs = editor_outputs(&st);
-    let cw = 720.0;
-    let ch = 520.0;
-    let scale = canvas::canvas_scale(&outs, cw, ch);
+    let cw = st.canvas_w.max(32.0);
+    let ch = st.canvas_h.max(32.0);
+    let locked = st.editor.as_ref().and_then(|e| e.view_lock);
+    let (drawn, view) = canvas::layout_drawn(&outs, cw, ch, locked);
     if let Some(ed) = st.editor.as_mut() {
-        ed.canvas_scale = scale;
+        if ed.view_lock.is_none() {
+            // Keep last free view scale on the lock slot only while dragging.
+            let _ = view;
+        }
     }
     let selected = st.editor.as_ref().map(|e| e.selected).unwrap_or(0);
-    let drawn = canvas::layout_drawn(&outs, cw, ch);
-    let model: Vec<CanvasMonitor> = drawn
+    let model = st.canvas_model.clone();
+    let rows: Vec<CanvasMonitor> = drawn
         .into_iter()
         .map(|d| CanvasMonitor {
             label: d.label.into(),
@@ -350,7 +398,15 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             ghost: d.ghost,
         })
         .collect();
-    ui.set_canvas_monitors(ModelRc::new(VecModel::from(model)));
+
+    // Prefer in-place row updates so TouchAreas survive mid-drag.
+    if model.row_count() == rows.len() {
+        for (i, row) in rows.into_iter().enumerate() {
+            model.set_row_data(i, row);
+        }
+    } else {
+        model.set_vec(rows);
+    }
 
     let warnings: Vec<String> = {
         let Some(ed) = &st.editor else {
@@ -392,11 +448,64 @@ fn select_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
         if idx >= ed.profile.monitors.len() {
             return;
         }
-        ed.selected = idx;
-        ed.drag_origin = None;
+        if ed.selected != idx {
+            ed.selected = idx;
+            ed.drag_origin = None;
+            ed.drag_press_px = None;
+            ed.view_lock = None;
+        }
     }
     push_canvas(ui, state);
     push_inspector(ui, state);
+}
+
+fn end_drag(state: &Rc<RefCell<AppState>>) {
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+        ed.view_lock = None;
+    }
+}
+
+fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, cx: f32, cy: f32) {
+    {
+        let mut st = state.borrow_mut();
+        if st.editor.as_ref().is_none_or(|e| idx >= e.positions.len()) {
+            return;
+        }
+        if st.editor.as_ref().is_some_and(|e| e.view_lock.is_none()) {
+            let outs = editor_outputs(&st);
+            let cw = st.canvas_w.max(32.0);
+            let ch = st.canvas_h.max(32.0);
+            let view = canvas::compute_view(&outs, cw, ch);
+            if let Some(ed) = st.editor.as_mut() {
+                ed.view_lock = Some(view);
+            }
+        }
+        let Some(ed) = st.editor.as_mut() else {
+            return;
+        };
+        ed.selected = idx;
+        if ed.drag_origin.is_none() {
+            ed.drag_origin = Some(ed.positions[idx]);
+            ed.drag_press_px = Some((cx, cy));
+        }
+        let origin = ed.drag_origin.unwrap();
+        let (px, py) = ed.drag_press_px.unwrap_or((cx, cy));
+        let scale = ed.view_lock.map(|v| v.scale).unwrap_or(1.0).max(0.01);
+        ed.positions[idx] = (
+            origin.0 + ((cx - px) / scale) as i32,
+            origin.1 + ((cy - py) / scale) as i32,
+        );
+    }
+    ui.set_editor_dirty(true);
+    push_canvas(ui, state);
+    let st = state.borrow();
+    if let Some(ed) = &st.editor {
+        let (x, y) = ed.positions[ed.selected];
+        ui.set_insp_pos_x(x.to_string().into());
+        ui.set_insp_pos_y(y.to_string().into());
+    }
 }
 
 fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
@@ -511,6 +620,8 @@ fn set_pos(ui: &AppWindow, state: &Rc<RefCell<AppState>>, x: i32, y: i32) {
         let i = ed.selected;
         ed.positions[i] = (x, y);
         ed.drag_origin = None;
+        ed.drag_press_px = None;
+        ed.view_lock = None;
     }
     mark_dirty(ui, state);
 }
@@ -520,36 +631,6 @@ fn set_enabled(ui: &AppWindow, state: &Rc<RefCell<AppState>>, en: bool) {
         ed.profile.monitors[ed.selected].enabled = en;
     }
     mark_dirty(ui, state);
-}
-
-fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, dx: f32, dy: f32) {
-    {
-        let mut st = state.borrow_mut();
-        let Some(ed) = st.editor.as_mut() else {
-            return;
-        };
-        if idx >= ed.positions.len() {
-            return;
-        }
-        if ed.drag_origin.is_none() {
-            ed.drag_origin = Some(ed.positions[idx]);
-            ed.selected = idx;
-        }
-        let origin = ed.drag_origin.unwrap();
-        let scale = ed.canvas_scale.max(0.01);
-        let nx = origin.0 + (dx / scale) as i32;
-        let ny = origin.1 + (dy / scale) as i32;
-        ed.positions[idx] = (nx, ny);
-    }
-    ui.set_editor_dirty(true);
-    push_canvas(ui, state);
-    // Update pos fields without resetting drag_origin
-    let st = state.borrow();
-    if let Some(ed) = &st.editor {
-        let (x, y) = ed.positions[ed.selected];
-        ui.set_insp_pos_x(x.to_string().into());
-        ui.set_insp_pos_y(y.to_string().into());
-    }
 }
 
 fn center_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {

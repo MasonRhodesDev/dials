@@ -1,7 +1,10 @@
 // hyprstate → Displays (MVP). Canvas-first monitor profile editor.
 // UX: monitor-profiles/.plans/planning/ux_design.md
 
-import { Button, LineEdit, ScrollView, VerticalBox, HorizontalBox, CheckBox, ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Palette, Button, LineEdit, ScrollView, VerticalBox, HorizontalBox, CheckBox, ComboBox } from "std-widgets.slint";
+
+export { Theme, Palette }
 
 export struct ProfileRow {
     name: string,
@@ -24,7 +27,11 @@ export component AppWindow inherits Window {
     title: "hyprstate — Profiles";
     preferred-width: 1100px;
     preferred-height: 720px;
-    background: #1a1b1e;
+    background: Theme.page-bg;
+
+    public function sync-palette() {
+        Palette.color-scheme = Theme.mode == "light" ? ColorScheme.light : ColorScheme.dark;
+    }
 
     in-out property <bool> show-editor: false;
     in-out property <string> live-signature: "";
@@ -64,6 +71,8 @@ export component AppWindow inherits Window {
     callback insp-pos-changed(string, string);
     callback insp-enabled-changed(bool);
     callback canvas-drag(int, float, float);
+    callback canvas-drag-end();
+    callback canvas-resized(float, float);
 
     if !root.show-editor: VerticalBox {
         padding: 28px;
@@ -71,13 +80,13 @@ export component AppWindow inherits Window {
 
         Text {
             text: "Profiles";
-            color: #f2f2f2;
+            color: Theme.fg;
             font-size: 28px;
             font-weight: 700;
         }
         Text {
             text: root.live-signature;
-            color: #9a9a9a;
+            color: Theme.fg-muted;
             font-size: 14px;
             wrap: word-wrap;
         }
@@ -88,12 +97,13 @@ export component AppWindow inherits Window {
                 spacing: 4px;
                 for p[i] in root.profiles: Rectangle {
                     height: 44px;
+                    vertical-stretch: 0;
                     border-radius: 6px;
                     ta := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.open-profile(i); }
                     }
-                    background: ta.has-hover ? #2a2b30 : #1a1b1e;
+                    background: ta.has-hover ? Theme.panel-bg-high : Theme.page-bg;
 
                     HorizontalBox {
                         padding-left: 12px;
@@ -103,23 +113,23 @@ export component AppWindow inherits Window {
 
                         Text {
                             text: p.matched ? "●" : " ";
-                            color: #6cb6ff;
+                            color: Theme.accent;
                             font-size: 14px;
                         }
                         Text {
                             text: p.name;
-                            color: #f2f2f2;
+                            color: Theme.fg;
                             font-size: 15px;
                             horizontal-stretch: 1;
                         }
                         Text {
                             text: p.source;
-                            color: #8a8a8a;
+                            color: Theme.fg-muted;
                             font-size: 12px;
                         }
                         if p.active: Text {
                             text: "✓";
-                            color: #7dcea0;
+                            color: Theme.accent;
                             font-size: 14px;
                         }
                     }
@@ -133,7 +143,7 @@ export component AppWindow inherits Window {
         }
         Text {
             text: root.status-text;
-            color: #8a8a8a;
+            color: Theme.fg-muted;
             font-size: 12px;
         }
     }
@@ -154,19 +164,19 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 Text {
                     text: root.editor-name;
-                    color: #f2f2f2;
+                    color: Theme.fg;
                     font-size: 18px;
                     font-weight: 600;
                 }
                 Text {
                     text: root.editor-badge + (root.editor-dirty ? " · Modified" : "");
-                    color: #9a9a9a;
+                    color: Theme.fg-muted;
                     font-size: 12px;
                 }
             }
             Text {
                 text: root.editor-source;
-                color: #8a8a8a;
+                color: Theme.fg-muted;
                 font-size: 12px;
             }
             Button {
@@ -181,47 +191,34 @@ export component AppWindow inherits Window {
             spacing: 12px;
             vertical-stretch: 1;
 
-            // Canvas
             Rectangle {
                 horizontal-stretch: 3;
-                background: #121316;
+                background: Theme.canvas-bg;
                 border-radius: 8px;
                 border-width: 1px;
-                border-color: #2c2d32;
+                border-color: Theme.border;
                 clip: true;
 
-                property <float> drag-start-x;
-                property <float> drag-start-y;
-                property <float> mon-start-x;
-                property <float> mon-start-y;
-                property <int> drag-index: -1;
-
-                TouchArea {
-                    mouse-cursor: pointer;
-                    moved => {
-                        if (self.pressed && root.selected-index >= 0) {
-                            root.canvas-drag(
-                                root.selected-index,
-                                self.mouse-x / 1px - self.pressed-x / 1px,
-                                self.mouse-y / 1px - self.pressed-y / 1px,
-                            );
-                        }
-                    }
+                changed width => {
+                    root.canvas-resized(self.width / 1px, self.height / 1px);
+                }
+                changed height => {
+                    root.canvas-resized(self.width / 1px, self.height / 1px);
                 }
 
                 for m[i] in root.canvas-monitors: Rectangle {
                     x: m.x * 1px;
                     y: m.y * 1px;
-                    width: max(m.w * 1px, 24px);
-                    height: max(m.h * 1px, 24px);
+                    width: m.w * 1px;
+                    height: m.h * 1px;
                     border-radius: 4px;
-                    background: m.ghost ? #2a2b3080 : (m.selected ? #2a4060 : #25262b);
+                    background: m.ghost ? Theme.tile-bg.with-alpha(0.5) : (m.selected ? Theme.tile-selected : Theme.tile-bg);
                     border-width: m.selected ? 2px : 1px;
-                    border-color: m.selected ? #6cb6ff : #3a3b40;
+                    border-color: m.selected ? Theme.accent : Theme.border;
 
                     Text {
                         text: m.label;
-                        color: #e8e8e8;
+                        color: Theme.fg;
                         font-size: 11px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -235,26 +232,29 @@ export component AppWindow inherits Window {
                         clicked => { root.select-monitor(i); }
                         moved => {
                             if self.pressed {
-                                root.select-monitor(i);
                                 root.canvas-drag(
                                     i,
-                                    self.mouse-x / 1px - self.pressed-x / 1px,
-                                    self.mouse-y / 1px - self.pressed-y / 1px,
+                                    m.x + self.mouse-x / 1px,
+                                    m.y + self.mouse-y / 1px,
                                 );
+                            }
+                        }
+                        changed pressed => {
+                            if !self.pressed {
+                                root.canvas-drag-end();
                             }
                         }
                     }
                 }
             }
 
-            // Inspector
             Rectangle {
                 horizontal-stretch: 1;
                 min-width: 280px;
-                background: #1e1f24;
+                background: Theme.panel-bg;
                 border-radius: 8px;
                 border-width: 1px;
-                border-color: #2c2d32;
+                border-color: Theme.border;
 
                 VerticalBox {
                     padding: 14px;
@@ -262,37 +262,37 @@ export component AppWindow inherits Window {
 
                     Text {
                         text: root.insp-label == "" ? "Select a monitor" : root.insp-label;
-                        color: #f2f2f2;
+                        color: Theme.fg;
                         font-size: 15px;
                         font-weight: 600;
                     }
 
-                    Text { text: "Mode"; color: #8a8a8a; font-size: 11px; }
+                    Text { text: "Mode"; color: Theme.fg-muted; font-size: 11px; }
                     ComboBox {
                         model: root.insp-modes;
                         current-index: root.insp-mode-index;
                         selected => { root.insp-mode-changed(self.current-index); }
                     }
 
-                    Text { text: "Scale"; color: #8a8a8a; font-size: 11px; }
+                    Text { text: "Scale"; color: Theme.fg-muted; font-size: 11px; }
                     LineEdit {
                         text: root.insp-scale;
                         edited => { root.insp-scale-changed(self.text); }
                     }
                     if root.insp-snap != "": Text {
                         text: root.insp-snap;
-                        color: #9a9a9a;
+                        color: Theme.fg-muted;
                         font-size: 11px;
                     }
 
-                    Text { text: "Rotate"; color: #8a8a8a; font-size: 11px; }
+                    Text { text: "Rotate"; color: Theme.fg-muted; font-size: 11px; }
                     ComboBox {
                         model: root.insp-rotates;
                         current-index: root.insp-rotate-index;
                         selected => { root.insp-rotate-changed(self.current-index); }
                     }
 
-                    Text { text: "Position"; color: #8a8a8a; font-size: 11px; }
+                    Text { text: "Position"; color: Theme.fg-muted; font-size: 11px; }
                     HorizontalBox {
                         LineEdit {
                             text: root.insp-pos-x;
@@ -321,13 +321,13 @@ export component AppWindow inherits Window {
                         clicked => { root.show-advanced = !root.show-advanced; }
                         Text {
                             text: root.show-advanced ? "▾ Match / advanced" : "▸ Match / advanced";
-                            color: #8a8a8a;
+                            color: Theme.fg-muted;
                             font-size: 12px;
                         }
                     }
                     if root.show-advanced: Text {
                         text: root.insp-match;
-                        color: #9a9a9a;
+                        color: Theme.fg-muted;
                         font-size: 11px;
                         wrap: word-wrap;
                     }
@@ -337,13 +337,13 @@ export component AppWindow inherits Window {
 
         Text {
             text: root.warnings;
-            color: #c9a227;
+            color: Theme.secondary;
             font-size: 12px;
             wrap: word-wrap;
         }
         Text {
             text: root.status-text;
-            color: #8a8a8a;
+            color: Theme.fg-muted;
             font-size: 12px;
         }
     }

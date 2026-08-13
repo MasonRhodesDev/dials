@@ -10,8 +10,10 @@ publish = false
 [dependencies]
 monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
 slint = { version = "1.17", default-features = true, features = ["backend-winit", "renderer-femtovg", "compat-1-2"] }
+slint-kit = { path = "../slint-kit" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [build-dependencies]
 slint-build = "1.17"
+slint-kit = { path = "../slint-kit" }
