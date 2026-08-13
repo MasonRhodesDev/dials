@@ -613,6 +613,7 @@ fn center_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
 fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let path;
     let profile;
+    let wrote_user_override;
     {
         let mut st = state.borrow_mut();
         let Some(ed) = st.editor.as_mut() else {
@@ -621,17 +622,36 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
             m.position = Some(*pos);
         }
-        path = ed.listed.path.clone();
+        // System profiles: write in place when possible, else user override.
+        let (dest, user_override) = match ed.listed.source {
+            profiles_io::Source::User => (ed.listed.path.clone(), false),
+            profiles_io::Source::System => {
+                if profiles_io::system_writable() {
+                    (ed.listed.path.clone(), false)
+                } else {
+                    (
+                        profiles_io::user_dir().join(format!("{}.toml", ed.profile.name)),
+                        true,
+                    )
+                }
+            }
+        };
+        path = dest;
         profile = ed.profile.clone();
+        wrote_user_override = user_override;
     }
     match write_atomic(&path, &profile) {
         Ok(()) => {
             ui.set_editor_dirty(false);
             ui.set_status_text("Waiting for session…".into());
             state.borrow_mut().save_wait = Some(Instant::now());
-            // refresh listed copy
             if let Some(ed) = state.borrow_mut().editor.as_mut() {
                 ed.listed.profile = profile;
+                if wrote_user_override {
+                    ed.listed.source = profiles_io::Source::User;
+                    ed.listed.path = path;
+                    ui.set_editor_source("user".into());
+                }
             }
         }
         Err(e) => ui.set_status_text(format!("Save failed: {e}").into()),

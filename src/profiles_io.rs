@@ -2,7 +2,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use monitor_profiles::{Profile, from_toml, load_dir, to_toml};
+use monitor_profiles::{Profile, load_dir, to_toml};
 
 pub fn system_dir() -> PathBuf {
     PathBuf::from("/etc/monitor-profiles")
@@ -110,9 +110,3 @@ pub fn capture_path(name: &str) -> PathBuf {
     }
 }
 
-pub fn parse_file(path: &Path, name: &str) -> Result<Profile, String> {
-    let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    from_toml(name, &text)
-        .map(|(p, _)| p)
-        .map_err(|e| e.to_string())
-}
