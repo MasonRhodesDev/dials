@@ -571,6 +571,7 @@ fn open_listed(
     drop(st);
 
     ui.set_show_editor(true);
+    ui.set_selected_index(0);
     ui.set_editor_name(listed.profile.name.clone().into());
     ui.set_editor_source(listed.source.as_str().into());
     ui.set_editor_badge(badge.into());
@@ -801,6 +802,7 @@ fn select_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
             ed.drag_press_px = None;
         }
     }
+    ui.set_selected_index(idx as i32);
     push_canvas(ui, state);
     push_inspector(ui, state);
 }
