@@ -171,10 +171,14 @@ export component AppWindow inherits Window {
         KitToolbar {
             KitButton {
                 text: "← Profiles";
+                min-width: 96px;
+                max-width: 96px;
                 clicked => { root.back-to-list(); }
             }
 
             KitHeadingStack {
+                // Claim the bounded space between the leading and trailing actions.
+                horizontal-stretch: 1;
                 subtitle: root.editor-badge
                     + " · "
                     + root.editor-source
@@ -230,10 +234,14 @@ export component AppWindow inherits Window {
 
             if root.can-promote-shared: KitButton {
                 text: "Promote to shared";
+                min-width: 156px;
+                max-width: 156px;
                 clicked => { root.promote-to-shared(); }
             }
             KitButton {
                 text: "Save";
+                min-width: 68px;
+                max-width: 68px;
                 primary: true;
                 enabled: root.editor-dirty;
                 clicked => { root.save-profile(); }
