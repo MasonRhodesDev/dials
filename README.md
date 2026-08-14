@@ -12,6 +12,8 @@ UX: see `monitor-profiles` planning docs (Displays visual review board).
 
 ![Inspector for the selected output](docs/screenshots/inspector.png)
 
+![Profiles list](docs/screenshots/profiles.png)
+
 ## Run
 
 ```sh
