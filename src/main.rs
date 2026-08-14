@@ -1,4 +1,5 @@
 //! hyprstate-gui — Displays configurator (MVP).
+mod align;
 mod canvas;
 mod hyprctl;
 mod profiles_io;
@@ -25,8 +26,15 @@ struct EditorState {
     drag_origin: Option<(i32, i32)>,
     /// Canvas-local pointer at drag start (survives tile moves).
     drag_press_px: Option<(f32, f32)>,
-    /// Locked while dragging so fit-all reflow / model rebuild don't break the gesture.
-    view_lock: Option<canvas::CanvasView>,
+    /// Active pan/zoom transform (fit-all on open; user may zoom/pan).
+    view: canvas::CanvasView,
+    /// After user zoom/pan, resize won't auto re-fit.
+    view_custom: bool,
+    /// Middle-button / empty-space pan gesture.
+    panning: bool,
+    pan_last: Option<(f32, f32)>,
+    /// Logical snap guides (mapped to canvas in `push_canvas`).
+    active_guides: Vec<align::Guide>,
 }
 
 struct AppState {
@@ -66,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     refresh_list(&ui, &state);
+    open_current_desk(&ui, &state);
 
     {
         let ui_weak = ui.as_weak();
@@ -88,9 +97,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.on_capture_current(move || {
+        ui.on_open_current_desk(move || {
             let ui = ui_weak.unwrap();
-            capture_current(&ui, &state);
+            refresh_list(&ui, &state);
+            open_current_desk(&ui, &state);
         });
     }
     {
@@ -104,6 +114,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.on_promote_to_shared(move || {
+            let ui = ui_weak.unwrap();
+            promote_to_shared(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_rename_profile(move |name| {
+            let ui = ui_weak.unwrap();
+            rename_profile(&ui, &state, name);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
         ui.on_select_monitor(move |idx| {
             let ui = ui_weak.unwrap();
             select_monitor(&ui, &state, idx as usize);
@@ -112,9 +138,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.on_center_to_neighbor(move || {
+        ui.on_align_to_neighbor(move |op| {
             let ui = ui_weak.unwrap();
-            center_to_neighbor(&ui, &state);
+            align_to_neighbor(&ui, &state, op);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_set_as_origin(move || {
+            let ui = ui_weak.unwrap();
+            set_as_origin(&ui, &state);
         });
     }
     {
@@ -177,9 +211,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.on_canvas_drag_end(move || {
-            end_drag(&state);
             if let Some(ui) = ui_weak.upgrade() {
-                push_canvas(&ui, &state);
+                end_drag(&ui, &state);
             }
         });
     }
@@ -193,8 +226,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 st.canvas_w = w;
                 st.canvas_h = h;
             }
+            let should_fit = state
+                .borrow()
+                .editor
+                .as_ref()
+                .is_some_and(|e| !e.view_custom);
+            if should_fit {
+                let view = {
+                    let st = state.borrow();
+                    let outs = editor_outputs(&st);
+                    canvas::fit_view(&outs, w.max(32.0), h.max(32.0))
+                };
+                if let Some(ed) = state.borrow_mut().editor.as_mut() {
+                    ed.view = view;
+                }
+            }
             if state.borrow().editor.is_some() {
                 push_canvas(&ui, &state);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_zoom(move |delta_y, cx, cy| {
+            let ui = ui_weak.unwrap();
+            canvas_zoom(&ui, &state, delta_y, cx, cy);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_zoom_step(move |factor| {
+            let ui = ui_weak.unwrap();
+            let (cx, cy) = {
+                let st = state.borrow();
+                (st.canvas_w * 0.5, st.canvas_h * 0.5)
+            };
+            let factor = if factor > 0.0 { 1.15 } else { 1.0 / 1.15 };
+            canvas_zoom_factor(&ui, &state, factor, cx, cy);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_fit(move || {
+            let ui = ui_weak.unwrap();
+            canvas_fit(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_pan(move |dx, dy| {
+            let ui = ui_weak.unwrap();
+            canvas_pan(&ui, &state, dx, dy);
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_canvas_pan_begin(move |x, y| {
+            if let Some(ed) = state.borrow_mut().editor.as_mut() {
+                ed.panning = true;
+                ed.pan_last = Some((x, y));
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_pan_move(move |x, y| {
+            let ui = ui_weak.unwrap();
+            let (dx, dy) = {
+                let mut st = state.borrow_mut();
+                let Some(ed) = st.editor.as_mut() else {
+                    return;
+                };
+                if !ed.panning {
+                    return;
+                }
+                let (lx, ly) = ed.pan_last.unwrap_or((x, y));
+                ed.pan_last = Some((x, y));
+                (x - lx, y - ly)
+            };
+            canvas_pan(&ui, &state, dx, dy);
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_canvas_pan_end(move || {
+            if let Some(ed) = state.borrow_mut().editor.as_mut() {
+                ed.panning = false;
+                ed.pan_last = None;
             }
         });
     }
@@ -264,11 +387,161 @@ fn profile_matches_sig(profile: &Profile, signature: &[String]) -> bool {
             .all(|m| match_in_signature(m, signature))
 }
 
+fn open_current_desk(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let active_idx = {
+        let st = state.borrow();
+        st.active_name.as_ref().and_then(|name| {
+            st.listed
+                .iter()
+                .position(|l| l.profile.name.as_str() == name.as_str())
+        })
+    };
+    if let Some(idx) = active_idx {
+        open_editor(ui, state, idx);
+        return;
+    }
+    open_seeded_current_desk(ui, state);
+}
+
 fn open_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
-    let mut st = state.borrow_mut();
-    let Some(listed) = st.listed.get(idx).cloned() else {
+    let listed = {
+        let st = state.borrow();
+        st.listed.get(idx).cloned()
+    };
+    let Some(listed) = listed else {
         return;
     };
+    let badge = {
+        let st = state.borrow();
+        if st.active_name.as_deref() == Some(listed.profile.name.as_str()) {
+            "Current desk · Active"
+        } else if profile_matches_sig(&listed.profile, &st.signature) {
+            "Matched to live desk"
+        } else {
+            "Historical"
+        }
+    };
+    open_listed(ui, state, listed, false, badge);
+}
+
+fn open_seeded_current_desk(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    if st.live.is_empty() {
+        drop(st);
+        ui.set_status_text("No live monitors to edit.".into());
+        ui.set_show_editor(false);
+        return;
+    }
+    let name = seed_name_from_live(&st.live);
+    if let Some(idx) = st
+        .listed
+        .iter()
+        .position(|l| l.profile.name.as_str() == name.as_str())
+    {
+        drop(st);
+        open_editor(ui, state, idx);
+        return;
+    }
+    let (profile, path, source) = seed_profile_from_live(&st.live, &name);
+    let listed = ListedProfile {
+        profile,
+        source,
+        path,
+    };
+    drop(st);
+    open_listed(ui, state, listed, true, "Current desk · Unsaved");
+}
+
+fn seed_name_from_live(live: &[hyprctl::HyprMonitor]) -> String {
+    let parts: Vec<String> = live
+        .iter()
+        .map(|h| {
+            let raw = if h.description.is_empty() {
+                h.name.clone()
+            } else {
+                strip_serial_suffix(&h.description)
+            };
+            sanitize_profile_name(&raw)
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        "live-desk".into()
+    } else {
+        parts.join("-and-")
+    }
+}
+
+fn sanitize_profile_name(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in raw.chars() {
+        let ok = c.is_ascii_alphanumeric();
+        if ok {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+fn seed_profile_from_live(
+    live: &[hyprctl::HyprMonitor],
+    name: &str,
+) -> (Profile, std::path::PathBuf, profiles_io::Source) {
+    let mut monitors = Vec::new();
+    let mut matches = Vec::new();
+    for h in live {
+        let selector = if h.description.is_empty() {
+            h.name.clone()
+        } else {
+            let desc = strip_serial_suffix(&h.description);
+            format!("desc:{desc}")
+        };
+        matches.push(selector.clone());
+        let mode = Mode {
+            width: h.width,
+            height: h.height,
+            refresh: h.refresh_rate.round(),
+        };
+        monitors.push(Monitor {
+            output: selector,
+            mode: Some(mode),
+            scale: h.scale,
+            position: Some((h.x, h.y)),
+            transform: h.transform % 4,
+            enabled: true,
+        });
+    }
+    let profile = Profile {
+        name: name.to_string(),
+        description: "Current desk (seeded from live Hyprland layout).".into(),
+        matches,
+        edp: monitor_profiles::EdpPolicy::Auto,
+        gpu: monitor_profiles::GpuPref::Auto,
+        hooks: vec![],
+        priority: monitors.len() as i64,
+        monitors,
+        workspaces: vec![],
+    };
+    let path = profiles_io::user_profile_path(name);
+    (profile, path, profiles_io::Source::User)
+}
+
+fn open_listed(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    listed: ListedProfile,
+    dirty: bool,
+    badge: &str,
+) {
+    let mut st = state.borrow_mut();
     let resolved = resolve(&listed.profile, &st.connected);
     let positions: Vec<(i32, i32)> = listed
         .profile
@@ -282,32 +555,44 @@ fn open_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
         })
         .collect();
 
-    let badge = if st.active_name.as_deref() == Some(listed.profile.name.as_str()) {
-        "Matched · Active"
-    } else if profile_matches_sig(&listed.profile, &st.signature) {
-        "Matched"
-    } else {
-        "Not matched to live desk"
-    };
+    st.editor = Some(EditorState {
+        listed: listed.clone(),
+        profile: listed.profile.clone(),
+        selected: 0,
+        positions,
+        drag_origin: None,
+        drag_press_px: None,
+        view: canvas::CanvasView::default(),
+        view_custom: false,
+        panning: false,
+        pan_last: None,
+        active_guides: Vec::new(),
+    });
+    drop(st);
 
     ui.set_show_editor(true);
     ui.set_editor_name(listed.profile.name.clone().into());
     ui.set_editor_source(listed.source.as_str().into());
     ui.set_editor_badge(badge.into());
-    ui.set_editor_dirty(false);
+    ui.set_editor_dirty(dirty);
+    ui.set_renaming_profile(false);
+    ui.set_can_promote_shared(
+        listed.source == profiles_io::Source::User && profiles_io::shared_writable(),
+    );
     ui.set_status_text("".into());
     ui.set_insp_match(listed.profile.matches.join("\n").into());
 
-    st.editor = Some(EditorState {
-        listed: listed.clone(),
-        profile: listed.profile,
-        selected: 0,
-        positions,
-        drag_origin: None,
-        drag_press_px: None,
-        view_lock: None,
-    });
-    drop(st);
+    {
+        let view = {
+            let st = state.borrow();
+            let outs = editor_outputs(&st);
+            canvas::fit_view(&outs, st.canvas_w.max(32.0), st.canvas_h.max(32.0))
+        };
+        if let Some(ed) = state.borrow_mut().editor.as_mut() {
+            ed.view = view;
+            ed.view_custom = false;
+        }
+    }
     push_canvas(ui, state);
     select_monitor(ui, state, 0);
 }
@@ -326,11 +611,11 @@ fn editor_outputs(st: &AppState) -> Vec<(ResolvedOutput, String, bool)> {
         .iter()
         .enumerate()
         .map(|(i, m)| {
-            let connected = st
-                .connected
-                .iter()
-                .any(|c| selects(&m.output, c));
-            let out = resolved
+            let connected = st.connected.iter().any(|c| selects(&m.output, c));
+            let pos = ed.positions.get(i).copied().unwrap_or((0, 0));
+            // Prefer live resolve for connector name, but always paint with the
+            // editor's mode/scale/transform/position so bounds match the profile.
+            let mut out = resolved
                 .outputs
                 .iter()
                 .find(|o| o.selector == m.output)
@@ -339,11 +624,16 @@ fn editor_outputs(st: &AppState) -> Vec<(ResolvedOutput, String, bool)> {
                     name: m.output.clone(),
                     selector: m.output.clone(),
                     mode: m.mode,
-                    position: ed.positions.get(i).copied().unwrap_or((0, 0)),
+                    position: pos,
                     scale: m.scale,
                     transform: m.transform,
                     enabled: m.enabled,
                 });
+            out.mode = m.mode;
+            out.scale = m.scale;
+            out.transform = m.transform;
+            out.position = pos;
+            out.enabled = m.enabled;
             let label = short_label(&m.output);
             (out, label, !connected)
         })
@@ -372,20 +662,17 @@ fn short_label(output: &str) -> String {
 }
 
 fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
-    let mut st = state.borrow_mut();
+    let st = state.borrow_mut();
     let outs = editor_outputs(&st);
-    let cw = st.canvas_w.max(32.0);
-    let ch = st.canvas_h.max(32.0);
-    let locked = st.editor.as_ref().and_then(|e| e.view_lock);
-    let (drawn, view) = canvas::layout_drawn(&outs, cw, ch, locked);
-    if let Some(ed) = st.editor.as_mut() {
-        if ed.view_lock.is_none() {
-            // Keep last free view scale on the lock slot only while dragging.
-            let _ = view;
-        }
-    }
+    let view = st
+        .editor
+        .as_ref()
+        .map(|e| e.view)
+        .unwrap_or_default();
+    let drawn = canvas::layout_drawn(&outs, view);
     let selected = st.editor.as_ref().map(|e| e.selected).unwrap_or(0);
     let model = st.canvas_model.clone();
+    let zoom_pct = (view.scale * 100.0).round() as i32;
     let rows: Vec<CanvasMonitor> = drawn
         .into_iter()
         .map(|d| CanvasMonitor {
@@ -396,10 +683,10 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             h: d.h,
             selected: d.index == selected,
             ghost: d.ghost,
+            origin: d.origin,
         })
         .collect();
 
-    // Prefer in-place row updates so TouchAreas survive mid-drag.
     if model.row_count() == rows.len() {
         for (i, row) in rows.into_iter().enumerate() {
             model.set_row_data(i, row);
@@ -407,6 +694,27 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     } else {
         model.set_vec(rows);
     }
+    ui.set_canvas_zoom_label(format!("{zoom_pct}%").into());
+
+    let guides = st
+        .editor
+        .as_ref()
+        .map(|e| e.active_guides.clone())
+        .unwrap_or_default();
+    let guide_rows: Vec<CanvasGuide> = guides
+        .iter()
+        .map(|g| match *g {
+            align::Guide::Vertical(lx) => CanvasGuide {
+                vertical: true,
+                pos: canvas::map_x(&view, lx),
+            },
+            align::Guide::Horizontal(ly) => CanvasGuide {
+                vertical: false,
+                pos: canvas::map_y(&view, ly),
+            },
+        })
+        .collect();
+    ui.set_canvas_guides(ModelRc::new(VecModel::from(guide_rows)));
 
     let warnings: Vec<String> = {
         let Some(ed) = &st.editor else {
@@ -439,6 +747,45 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     ui.set_warnings(warnings.join(" · ").into());
 }
 
+fn canvas_zoom(ui: &AppWindow, state: &Rc<RefCell<AppState>>, delta_y: f32, cx: f32, cy: f32) {
+    canvas_zoom_factor(ui, state, canvas::zoom_factor_from_wheel(delta_y), cx, cy);
+}
+
+fn canvas_zoom_factor(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    factor: f32,
+    cx: f32,
+    cy: f32,
+) {
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.view = canvas::zoom_at(ed.view, factor, cx, cy);
+        ed.view_custom = true;
+    }
+    push_canvas(ui, state);
+}
+
+fn canvas_fit(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let view = {
+        let st = state.borrow();
+        let outs = editor_outputs(&st);
+        canvas::fit_view(&outs, st.canvas_w.max(32.0), st.canvas_h.max(32.0))
+    };
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.view = view;
+        ed.view_custom = false;
+    }
+    push_canvas(ui, state);
+}
+
+fn canvas_pan(ui: &AppWindow, state: &Rc<RefCell<AppState>>, dx: f32, dy: f32) {
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.view = canvas::pan(ed.view, dx, dy);
+        ed.view_custom = true;
+    }
+    push_canvas(ui, state);
+}
+
 fn select_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
     {
         let mut st = state.borrow_mut();
@@ -452,35 +799,28 @@ fn select_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
             ed.selected = idx;
             ed.drag_origin = None;
             ed.drag_press_px = None;
-            ed.view_lock = None;
         }
     }
     push_canvas(ui, state);
     push_inspector(ui, state);
 }
 
-fn end_drag(state: &Rc<RefCell<AppState>>) {
+fn end_drag(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     if let Some(ed) = state.borrow_mut().editor.as_mut() {
         ed.drag_origin = None;
         ed.drag_press_px = None;
-        ed.view_lock = None;
+        ed.active_guides.clear();
     }
+    push_canvas(ui, state);
 }
 
 fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, cx: f32, cy: f32) {
+    let snap_edges = ui.get_helper_snap_edges();
+    let snap_centers = ui.get_helper_snap_centers();
     {
         let mut st = state.borrow_mut();
         if st.editor.as_ref().is_none_or(|e| idx >= e.positions.len()) {
             return;
-        }
-        if st.editor.as_ref().is_some_and(|e| e.view_lock.is_none()) {
-            let outs = editor_outputs(&st);
-            let cw = st.canvas_w.max(32.0);
-            let ch = st.canvas_h.max(32.0);
-            let view = canvas::compute_view(&outs, cw, ch);
-            if let Some(ed) = st.editor.as_mut() {
-                ed.view_lock = Some(view);
-            }
         }
         let Some(ed) = st.editor.as_mut() else {
             return;
@@ -492,12 +832,61 @@ fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, cx: f
         }
         let origin = ed.drag_origin.unwrap();
         let (px, py) = ed.drag_press_px.unwrap_or((cx, cy));
-        let scale = ed.view_lock.map(|v| v.scale).unwrap_or(1.0).max(0.01);
-        ed.positions[idx] = (
+        let scale = ed.view.scale.max(0.01);
+        let mut pos = (
             origin.0 + ((cx - px) / scale) as i32,
             origin.1 + ((cy - py) / scale) as i32,
         );
+
+        ed.active_guides.clear();
+        if snap_edges || snap_centers {
+            let rects: Vec<align::Rect> = ed
+                .profile
+                .monitors
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let (x, y) = if i == idx {
+                        pos
+                    } else {
+                        ed.positions.get(i).copied().unwrap_or((0, 0))
+                    };
+                    let ro = ResolvedOutput {
+                        name: String::new(),
+                        selector: String::new(),
+                        mode: m.mode,
+                        position: (x, y),
+                        scale: m.scale,
+                        transform: m.transform,
+                        enabled: true,
+                    };
+                    let (w, h) = canvas::logical_size(&ro);
+                    align::Rect { x, y, w, h }
+                })
+                .collect();
+            let moving = rects[idx];
+            let others: Vec<align::Rect> = rects
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, r)| *r)
+                .collect();
+            let snapped = align::snap_position(
+                moving,
+                &others,
+                align::SnapOpts {
+                    edges: snap_edges,
+                    centers: snap_centers,
+                    threshold: 32,
+                },
+            );
+            pos = (snapped.x, snapped.y);
+            ed.active_guides = snapped.guides;
+        }
+
+        ed.positions[idx] = pos;
     }
+    ui.set_selected_index(idx as i32);
     ui.set_editor_dirty(true);
     push_canvas(ui, state);
     let st = state.borrow();
@@ -505,6 +894,7 @@ fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, cx: f
         let (x, y) = ed.positions[ed.selected];
         ui.set_insp_pos_x(x.to_string().into());
         ui.set_insp_pos_y(y.to_string().into());
+        ui.set_insp_is_origin(x == 0 && y == 0);
     }
 }
 
@@ -531,11 +921,18 @@ fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     ui.set_insp_rotate_index(i32::from(m.transform.min(3)));
     ui.set_insp_pos_x(x.to_string().into());
     ui.set_insp_pos_y(y.to_string().into());
+    ui.set_insp_is_origin(x == 0 && y == 0);
     ui.set_insp_enabled(m.enabled);
 
-    let modes = modes_for(&st.live, &m.output);
+    let mut modes = modes_for(&st.live, &m.output);
     let current = m.mode.map(|md| md.to_string()).unwrap_or_default();
-    let mut idx = modes.iter().position(|t| t == &current).unwrap_or(0);
+    if !current.is_empty() && !modes.iter().any(|t| mode_strings_match(t, &current)) {
+        modes.insert(0, current.clone());
+    }
+    let idx = modes
+        .iter()
+        .position(|t| mode_strings_match(t, &current))
+        .unwrap_or(0);
     if modes.is_empty() {
         let fallback = if current.is_empty() {
             "preferred".to_string()
@@ -545,7 +942,7 @@ fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         ui.set_insp_modes(ModelRc::new(VecModel::from(vec![SharedString::from(
             fallback,
         )])));
-        idx = 0;
+        ui.set_insp_mode_index(0);
     } else {
         ui.set_insp_modes(ModelRc::new(VecModel::from(
             modes
@@ -553,8 +950,8 @@ fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
                 .map(|t| SharedString::from(t.as_str()))
                 .collect::<Vec<_>>(),
         )));
+        ui.set_insp_mode_index(idx as i32);
     }
-    ui.set_insp_mode_index(idx as i32);
 }
 
 fn modes_for(live: &[hyprctl::HyprMonitor], selector: &str) -> Vec<String> {
@@ -563,11 +960,44 @@ fn modes_for(live: &[hyprctl::HyprMonitor], selector: &str) -> Vec<String> {
         .find(|m| m.name == selector || m.description.starts_with(desc))
         .map(|m| {
             let mut v = m.available_modes.clone();
-            v.sort();
+            v.sort_by(|a, b| mode_sort_key(b).cmp(&mode_sort_key(a)));
             v.dedup();
             v
         })
         .unwrap_or_default()
+}
+
+/// Prefer larger modes first (area, then refresh) — not lexicographic "1024…" first.
+fn mode_sort_key(s: &str) -> (u64, u64) {
+    let (w, h, hz) = parse_mode_parts(s);
+    (w.saturating_mul(h), hz)
+}
+
+fn parse_mode_parts(s: &str) -> (u64, u64, u64) {
+    let s = s.trim().trim_end_matches("Hz");
+    let Some((wh, rest)) = s.split_once('x') else {
+        return (0, 0, 0);
+    };
+    let w = wh.parse().unwrap_or(0);
+    let (h_str, hz_str) = rest
+        .split_once('@')
+        .map(|(h, hz)| (h, hz))
+        .unwrap_or((rest, "0"));
+    let h = h_str.parse().unwrap_or(0);
+    let hz = hz_str
+        .parse::<f64>()
+        .map(|f| f.round() as u64)
+        .unwrap_or(0);
+    (w, h, hz)
+}
+
+fn mode_strings_match(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (aw, ah, az) = parse_mode_parts(a);
+    let (bw, bh, bz) = parse_mode_parts(b);
+    aw == bw && ah == bh && aw > 0 && (az == bz || az.abs_diff(bz) <= 1)
 }
 
 fn mark_dirty(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
@@ -621,7 +1051,6 @@ fn set_pos(ui: &AppWindow, state: &Rc<RefCell<AppState>>, x: i32, y: i32) {
         ed.positions[i] = (x, y);
         ed.drag_origin = None;
         ed.drag_press_px = None;
-        ed.view_lock = None;
     }
     mark_dirty(ui, state);
 }
@@ -633,7 +1062,31 @@ fn set_enabled(ui: &AppWindow, state: &Rc<RefCell<AppState>>, en: bool) {
     mark_dirty(ui, state);
 }
 
-fn center_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+fn set_as_origin(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.editor.as_mut() else {
+            return;
+        };
+        let i = ed.selected;
+        let (ox, oy) = ed.positions[i];
+        if ox == 0 && oy == 0 {
+            return;
+        }
+        for pos in &mut ed.positions {
+            pos.0 -= ox;
+            pos.1 -= oy;
+        }
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+    }
+    mark_dirty(ui, state);
+}
+
+fn align_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, op: i32) {
+    let Some(op) = align::AlignOp::from_i32(op) else {
+        return;
+    };
     {
         let mut st = state.borrow_mut();
         let Some(ed) = st.editor.as_mut() else {
@@ -643,55 +1096,90 @@ fn center_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             return;
         }
         let i = ed.selected;
-        let j = if i == 0 { 1 } else { 0 };
-        let outs = {
-            // temporary resolve sizes
-            let mut profile = ed.profile.clone();
-            for (m, pos) in profile.monitors.iter_mut().zip(ed.positions.iter()) {
-                m.position = Some(*pos);
-            }
-            // use canvas helpers
-            profile
+        let rects: Vec<align::Rect> = ed
+            .profile
+            .monitors
+            .iter()
+            .enumerate()
+            .map(|(j, m)| {
+                let (x, y) = ed.positions.get(j).copied().unwrap_or((0, 0));
+                let ro = ResolvedOutput {
+                    name: String::new(),
+                    selector: String::new(),
+                    mode: m.mode,
+                    position: (x, y),
+                    scale: m.scale,
+                    transform: m.transform,
+                    enabled: true,
+                };
+                let (w, h) = canvas::logical_size(&ro);
+                align::Rect { x, y, w, h }
+            })
+            .collect();
+        let Some(j) = align::nearest_neighbor(i, &rects) else {
+            return;
         };
-        let _ = outs;
-        let size_i = {
-            let m = &ed.profile.monitors[i];
-            let ro = ResolvedOutput {
-                name: String::new(),
-                selector: String::new(),
-                mode: m.mode,
-                position: ed.positions[i],
-                scale: m.scale,
-                transform: m.transform,
-                enabled: true,
-            };
-            canvas::logical_size(&ro)
-        };
-        let size_j = {
-            let m = &ed.profile.monitors[j];
-            let ro = ResolvedOutput {
-                name: String::new(),
-                selector: String::new(),
-                mode: m.mode,
-                position: ed.positions[j],
-                scale: m.scale,
-                transform: m.transform,
-                enabled: true,
-            };
-            canvas::logical_size(&ro)
-        };
-        let (jx, jy) = ed.positions[j];
-        // Center i vertically relative to j (keep i's x)
-        let (ix, _) = ed.positions[i];
-        let cy = jy + (size_j.1 - size_i.1) / 2;
-        ed.positions[i] = (ix, cy);
+        ed.positions[i] = align::apply_align(op, rects[i], rects[j]);
+        ed.active_guides = op.guides(rects[j]);
         ed.drag_origin = None;
-        let _ = jx;
+        ed.drag_press_px = None;
     }
     mark_dirty(ui, state);
 }
 
+fn rename_profile(ui: &AppWindow, state: &Rc<RefCell<AppState>>, raw: SharedString) {
+    let name = raw.trim().to_string();
+    if name.is_empty() {
+        ui.set_status_text("Name cannot be empty.".into());
+        if let Some(ed) = state.borrow().editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        ui.set_status_text("Name cannot contain path separators.".into());
+        if let Some(ed) = state.borrow().editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    let stem = sanitize_profile_name(&name);
+    if stem.is_empty() {
+        ui.set_status_text("Name needs letters or numbers.".into());
+        if let Some(ed) = state.borrow().editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    {
+        let st = state.borrow();
+        let Some(ed) = st.editor.as_ref() else {
+            return;
+        };
+        if ed.profile.name == name {
+            return;
+        }
+        let conflict = st.listed.iter().any(|l| {
+            sanitize_profile_name(&l.profile.name) == stem && l.path != ed.listed.path
+        });
+        if conflict {
+            drop(st);
+            ui.set_status_text(format!("Profile “{stem}” already exists.").into());
+            if let Some(ed) = state.borrow().editor.as_ref() {
+                ui.set_editor_name(ed.profile.name.clone().into());
+            }
+            return;
+        }
+    }
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.profile.name = name.clone();
+    }
+    ui.set_editor_name(name.into());
+    mark_dirty(ui, state);
+}
+
 fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let old_path;
     let path;
     let profile;
     let wrote_user_override;
@@ -703,17 +1191,22 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
             m.position = Some(*pos);
         }
-        // System profiles: write in place when possible, else user override.
+        let stem = sanitize_profile_name(&ed.profile.name);
+        if stem.is_empty() {
+            drop(st);
+            ui.set_status_text("Name needs letters or numbers.".into());
+            return;
+        }
+        ed.profile.name = stem.clone();
+        old_path = ed.listed.path.clone();
+        // Shared: write in place when writable, else fall back to user (no perms fight).
         let (dest, user_override) = match ed.listed.source {
-            profiles_io::Source::User => (ed.listed.path.clone(), false),
-            profiles_io::Source::System => {
-                if profiles_io::system_writable() {
-                    (ed.listed.path.clone(), false)
+            profiles_io::Source::User => (profiles_io::user_profile_path(&stem), false),
+            profiles_io::Source::Shared => {
+                if profiles_io::shared_writable() {
+                    (profiles_io::shared_profile_path(&stem), false)
                 } else {
-                    (
-                        profiles_io::user_dir().join(format!("{}.toml", ed.profile.name)),
-                        true,
-                    )
+                    (profiles_io::user_profile_path(&stem), true)
                 }
             }
         };
@@ -723,20 +1216,81 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     }
     match write_atomic(&path, &profile) {
         Ok(()) => {
+            if old_path != path {
+                let _ = profiles_io::remove_file(&old_path);
+            }
             ui.set_editor_dirty(false);
+            ui.set_editor_name(profile.name.clone().into());
             ui.set_status_text("Waiting for session…".into());
             state.borrow_mut().save_wait = Some(Instant::now());
             if let Some(ed) = state.borrow_mut().editor.as_mut() {
                 ed.listed.profile = profile;
+                ed.listed.path = path.clone();
                 if wrote_user_override {
                     ed.listed.source = profiles_io::Source::User;
-                    ed.listed.path = path;
                     ui.set_editor_source("user".into());
+                    ui.set_can_promote_shared(profiles_io::shared_writable());
+                }
+            }
+            let name = state
+                .borrow()
+                .editor
+                .as_ref()
+                .map(|e| e.profile.name.clone());
+            refresh_list(ui, state);
+            if let Some(name) = name {
+                if state.borrow().active_name.as_deref() == Some(name.as_str()) {
+                    ui.set_editor_badge("Current desk · Active".into());
+                } else {
+                    ui.set_editor_badge("Current desk".into());
                 }
             }
         }
         Err(e) => ui.set_status_text(format!("Save failed: {e}").into()),
     }
+}
+
+fn promote_to_shared(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    if !profiles_io::shared_writable() {
+        ui.set_status_text("No write access to shared profiles.".into());
+        return;
+    }
+    let (user_path, shared_path, profile) = {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.editor.as_mut() else {
+            return;
+        };
+        if ed.listed.source != profiles_io::Source::User {
+            return;
+        }
+        for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
+            m.position = Some(*pos);
+        }
+        (
+            ed.listed.path.clone(),
+            profiles_io::shared_profile_path(&ed.profile.name),
+            ed.profile.clone(),
+        )
+    };
+    if let Err(e) = write_atomic(&shared_path, &profile) {
+        ui.set_status_text(format!("Promote failed: {e}").into());
+        return;
+    }
+    if let Err(e) = profiles_io::remove_file(&user_path) {
+        ui.set_status_text(format!(
+            "Wrote shared, but could not remove user copy: {e}"
+        ).into());
+    }
+    if let Some(ed) = state.borrow_mut().editor.as_mut() {
+        ed.listed.profile = profile;
+        ed.listed.path = shared_path;
+        ed.listed.source = profiles_io::Source::Shared;
+    }
+    ui.set_editor_source("shared".into());
+    ui.set_can_promote_shared(false);
+    ui.set_editor_dirty(false);
+    ui.set_status_text("Promoted to shared.".into());
+    refresh_list(ui, state);
 }
 
 fn session_matches_editor(st: &AppState) -> bool {
@@ -761,71 +1315,6 @@ fn session_matches_editor(st: &AppState) -> bool {
     true
 }
 
-fn capture_current(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
-    let st = state.borrow();
-    if st.live.is_empty() {
-        ui.set_status_text("No live monitors to capture.".into());
-        return;
-    }
-    let name = format!(
-        "captured-{}",
-        chrono_lite_stamp()
-    );
-    let mut monitors = Vec::new();
-    let mut matches = Vec::new();
-    for h in &st.live {
-        let selector = if h.description.is_empty() {
-            h.name.clone()
-        } else {
-            // serial-free prefix: make + model words (drop last token if looks like serial)
-            let desc = strip_serial_suffix(&h.description);
-            format!("desc:{desc}")
-        };
-        matches.push(selector.clone());
-        let mode = Mode {
-            width: h.width,
-            height: h.height,
-            refresh: h.refresh_rate.round(),
-        };
-        monitors.push(Monitor {
-            output: selector,
-            mode: Some(mode),
-            scale: h.scale,
-            position: Some((h.x, h.y)),
-            transform: h.transform % 4,
-            enabled: true,
-        });
-    }
-    let profile = Profile {
-        name: name.clone(),
-        description: "Captured from live Hyprland layout.".into(),
-        matches,
-        edp: monitor_profiles::EdpPolicy::Auto,
-        gpu: monitor_profiles::GpuPref::Auto,
-        hooks: vec![],
-        priority: monitors.len() as i64,
-        monitors,
-        workspaces: vec![],
-    };
-    let path = profiles_io::capture_path(&name);
-    drop(st);
-    match write_atomic(&path, &profile) {
-        Ok(()) => {
-            ui.set_status_text(format!("Captured {}", path.display()).into());
-            refresh_list(ui, state);
-            let idx = state
-                .borrow()
-                .listed
-                .iter()
-                .position(|l| l.profile.name == name);
-            if let Some(i) = idx {
-                open_editor(ui, state, i);
-            }
-        }
-        Err(e) => ui.set_status_text(format!("Capture failed: {e}").into()),
-    }
-}
-
 fn strip_serial_suffix(desc: &str) -> String {
     let parts: Vec<&str> = desc.split_whitespace().collect();
     if parts.len() >= 2 {
@@ -836,13 +1325,4 @@ fn strip_serial_suffix(desc: &str) -> String {
         }
     }
     desc.to_string()
-}
-
-fn chrono_lite_stamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{secs}")
 }

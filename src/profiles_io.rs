@@ -1,10 +1,10 @@
-//! Load/save profile TOML from system + user dirs.
+//! Load/save profile TOML from shared + user dirs.
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use monitor_profiles::{Profile, load_dir, to_toml};
 
-pub fn system_dir() -> PathBuf {
+pub fn shared_dir() -> PathBuf {
     PathBuf::from("/etc/monitor-profiles")
 }
 
@@ -18,14 +18,16 @@ pub fn user_dir() -> PathBuf {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    System,
+    /// `/etc/monitor-profiles` (greeter-shared)
+    Shared,
+    /// `~/.config/hypr/profiles` (per-user; wins on name)
     User,
 }
 
 impl Source {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::System => "system",
+            Self::Shared => "shared",
             Self::User => "user",
         }
     }
@@ -56,18 +58,18 @@ pub fn load_merged() -> (Vec<ListedProfile>, Vec<String>) {
         });
     }
 
-    let (system, sd) = load_dir(&system_dir());
+    let (shared, sd) = load_dir(&shared_dir());
     for d in sd {
         diags.push(format!("{}: {}", d.source, d.message));
     }
-    for p in system {
+    for p in shared {
         if out.iter().any(|l| l.profile.name == p.name) {
             continue;
         }
-        let path = system_dir().join(format!("{}.toml", p.name));
+        let path = shared_dir().join(format!("{}.toml", p.name));
         out.push(ListedProfile {
             profile: p,
-            source: Source::System,
+            source: Source::Shared,
             path,
         });
     }
@@ -90,23 +92,30 @@ pub fn write_atomic(path: &Path, profile: &Profile) -> Result<(), String> {
     Ok(())
 }
 
-pub fn system_writable() -> bool {
+pub fn shared_writable() -> bool {
     fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(system_dir().join(".write-test"))
+        .open(shared_dir().join(".write-test"))
         .and_then(|f| {
             drop(f);
-            fs::remove_file(system_dir().join(".write-test"))
+            fs::remove_file(shared_dir().join(".write-test"))
         })
         .is_ok()
 }
 
-pub fn capture_path(name: &str) -> PathBuf {
-    if system_writable() {
-        system_dir().join(format!("{name}.toml"))
-    } else {
-        user_dir().join(format!("{name}.toml"))
-    }
+/// New profiles default to the user dir (no perms surprises).
+pub fn user_profile_path(name: &str) -> PathBuf {
+    user_dir().join(format!("{name}.toml"))
 }
 
+pub fn shared_profile_path(name: &str) -> PathBuf {
+    shared_dir().join(format!("{name}.toml"))
+}
+
+pub fn remove_file(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

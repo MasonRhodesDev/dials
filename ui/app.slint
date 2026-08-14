@@ -2,7 +2,14 @@
 // UX: monitor-profiles/.plans/planning/ux_design.md
 
 import { Theme } from "theme.slint";
-import { Palette, Button, LineEdit, ScrollView, VerticalBox, HorizontalBox, CheckBox, ComboBox } from "std-widgets.slint";
+import {
+    KitButton, KitIconButton, KitCheckBox, KitLineEdit, KitComboBox, KitAlignPad,
+    KitDisplay, KitMuted, KitTitle, KitLabel, KitWarning,
+    KitVStack, KitHStack, KitSpacer,
+    KitListRow, KitToolbar, KitHeadingStack, KitField, KitDisclosure,
+    KitOverlayBar, KitSidePanel, Panel
+} from "widgets.slint";
+import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
 export { Theme, Palette }
 
@@ -21,10 +28,17 @@ export struct CanvasMonitor {
     h: float,
     selected: bool,
     ghost: bool,
+    origin: bool,
+}
+
+/// Active snap guide (only present while snapped). `vertical` → line at x=`pos`.
+export struct CanvasGuide {
+    vertical: bool,
+    pos: float,
 }
 
 export component AppWindow inherits Window {
-    title: "hyprstate — Profiles";
+    title: "hyprstate — Displays";
     preferred-width: 1100px;
     preferred-height: 720px;
     background: Theme.page-bg;
@@ -42,7 +56,11 @@ export component AppWindow inherits Window {
     in-out property <string> editor-source: "";
     in-out property <string> editor-badge: "";
     in-out property <bool> editor-dirty: false;
+    in-out property <bool> can-promote-shared: false;
+    in-out property <bool> renaming-profile: false;
+    in-out property <string> rename-draft: "";
     in-out property <[CanvasMonitor]> canvas-monitors: [];
+    in-out property <[CanvasGuide]> canvas-guides: [];
     in-out property <int> selected-index: -1;
 
     in-out property <string> insp-label: "";
@@ -55,16 +73,23 @@ export component AppWindow inherits Window {
     in-out property <string> insp-pos-x: "0";
     in-out property <string> insp-pos-y: "0";
     in-out property <bool> insp-enabled: true;
+    in-out property <bool> insp-is-origin: false;
     in-out property <bool> show-advanced: false;
+    in-out property <bool> helper-snap-edges: true;
+    in-out property <bool> helper-snap-centers: true;
     in-out property <string> insp-match: "";
     in-out property <string> warnings: "";
+    in-out property <string> canvas-zoom-label: "100%";
 
     callback open-profile(int);
-    callback capture-current();
+    callback open-current-desk();
     callback back-to-list();
     callback save-profile();
+    callback promote-to-shared();
+    callback rename-profile(string);
     callback select-monitor(int);
-    callback center-to-neighbor();
+    callback align-to-neighbor(int);
+    callback set-as-origin();
     callback insp-mode-changed(int);
     callback insp-scale-changed(string);
     callback insp-rotate-changed(int);
@@ -73,113 +98,141 @@ export component AppWindow inherits Window {
     callback canvas-drag(int, float, float);
     callback canvas-drag-end();
     callback canvas-resized(float, float);
+    callback canvas-zoom(float, float, float);
+    callback canvas-zoom-step(float);
+    callback canvas-fit();
+    callback canvas-pan(float, float);
+    callback canvas-pan-begin(float, float);
+    callback canvas-pan-move(float, float);
+    callback canvas-pan-end();
+
+    // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.page-bg;
 
     if !root.show-editor: VerticalBox {
-        padding: 28px;
-        spacing: 16px;
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            padding: Theme.page-pad;
+            spacing: Theme.space-lg;
 
-        Text {
-            text: "Profiles";
-            color: Theme.fg;
-            font-size: 28px;
-            font-weight: 700;
-        }
-        Text {
-            text: root.live-signature;
-            color: Theme.fg-muted;
-            font-size: 14px;
-            wrap: word-wrap;
-        }
+            KitDisplay { text: "Profiles"; }
+            KitMuted {
+                text: "Historical configurations. Live desk is edited separately.";
+                wrap-text: true;
+            }
+            KitMuted {
+                text: root.live-signature;
+                wrap-text: true;
+            }
 
-        ScrollView {
-            vertical-stretch: 1;
-            VerticalBox {
-                spacing: 4px;
-                for p[i] in root.profiles: Rectangle {
-                    height: 44px;
-                    vertical-stretch: 0;
-                    border-radius: 6px;
-                    ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.open-profile(i); }
-                    }
-                    background: ta.has-hover ? Theme.panel-bg-high : Theme.page-bg;
-
-                    HorizontalBox {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        spacing: 12px;
-                        alignment: center;
-
-                        Text {
-                            text: p.matched ? "●" : " ";
-                            color: Theme.accent;
-                            font-size: 14px;
-                        }
-                        Text {
-                            text: p.name;
-                            color: Theme.fg;
-                            font-size: 15px;
-                            horizontal-stretch: 1;
-                        }
-                        Text {
-                            text: p.source;
-                            color: Theme.fg-muted;
-                            font-size: 12px;
-                        }
-                        if p.active: Text {
-                            text: "✓";
-                            color: Theme.accent;
-                            font-size: 14px;
-                        }
-                    }
+            KitHStack {
+                gap: "form";
+                vertical-stretch: 0;
+                KitButton {
+                    text: "Edit current desk";
+                    primary: true;
+                    clicked => { root.open-current-desk(); }
                 }
             }
-        }
 
-        Button {
-            text: "Capture current layout…";
-            clicked => { root.capture-current(); }
+            KitVStack {
+                gap: "tight";
+                vertical-stretch: 1;
+                width: 100%;
+                horizontal-stretch: 1;
+
+                for p[i] in root.profiles: KitListRow {
+                    title: p.name;
+                    meta: p.source;
+                    matched: p.matched;
+                    active: p.active;
+                    clicked => { root.open-profile(i); }
+                }
+
+                KitSpacer { axis: "vertical"; }
+            }
+
+            KitMuted { text: root.status-text; }
         }
-        Text {
-            text: root.status-text;
-            color: Theme.fg-muted;
-            font-size: 12px;
-        }
-    }
 
     if root.show-editor: VerticalBox {
-        padding: 16px;
-        spacing: 10px;
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
 
-        HorizontalBox {
-            spacing: 12px;
-            alignment: center;
-            Button {
+        KitToolbar {
+            KitButton {
                 text: "← Profiles";
                 clicked => { root.back-to-list(); }
             }
-            VerticalBox {
-                spacing: 2px;
-                horizontal-stretch: 1;
-                Text {
-                    text: root.editor-name;
-                    color: Theme.fg;
-                    font-size: 18px;
-                    font-weight: 600;
+
+            KitHeadingStack {
+                subtitle: root.editor-badge
+                    + " · "
+                    + root.editor-source
+                    + (root.editor-dirty ? " · Modified" : "");
+
+                if !root.renaming-profile: TouchArea {
+                    mouse-cursor: pointer;
+                    horizontal-stretch: 1;
+                    width: 100%;
+                    clicked => {
+                        root.rename-draft = root.editor-name;
+                        root.renaming-profile = true;
+                    }
+                    KitTitle {
+                        text: root.editor-name;
+                        width: 100%;
+                        horizontal-alignment: left;
+                    }
                 }
-                Text {
-                    text: root.editor-badge + (root.editor-dirty ? " · Modified" : "");
-                    color: Theme.fg-muted;
-                    font-size: 12px;
+                if root.renaming-profile: KitHStack {
+                    gap: "form";
+                    center: true;
+                    width: 100%;
+                    horizontal-stretch: 1;
+                    TextInput {
+                        text <=> root.rename-draft;
+                        color: Theme.fg;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.font-weight-semibold;
+                        single-line: true;
+                        horizontal-stretch: 1;
+                        accepted => {
+                            root.rename-profile(self.text);
+                            root.renaming-profile = false;
+                        }
+                    }
+                    KitButton {
+                        text: "Done";
+                        small: true;
+                        primary: true;
+                        clicked => {
+                            root.rename-profile(root.rename-draft);
+                            root.renaming-profile = false;
+                        }
+                    }
+                    KitButton {
+                        text: "Cancel";
+                        small: true;
+                        clicked => { root.renaming-profile = false; }
+                    }
                 }
             }
-            Text {
-                text: root.editor-source;
-                color: Theme.fg-muted;
-                font-size: 12px;
+
+            if root.can-promote-shared: KitButton {
+                text: "Promote to shared";
+                clicked => { root.promote-to-shared(); }
             }
-            Button {
+            KitButton {
                 text: "Save";
                 primary: true;
                 enabled: root.editor-dirty;
@@ -188,16 +241,12 @@ export component AppWindow inherits Window {
         }
 
         HorizontalBox {
-            spacing: 12px;
+            spacing: Theme.space-md;
             vertical-stretch: 1;
 
-            Rectangle {
-                horizontal-stretch: 3;
-                background: Theme.canvas-bg;
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: Theme.border;
-                clip: true;
+            Panel {
+                variant: "canvas";
+                horizontal-stretch: 6;
 
                 changed width => {
                     root.canvas-resized(self.width / 1px, self.height / 1px);
@@ -206,20 +255,48 @@ export component AppWindow inherits Window {
                     root.canvas-resized(self.width / 1px, self.height / 1px);
                 }
 
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: default;
+                    scroll-event(ev) => {
+                        root.canvas-zoom(
+                            ev.delta-y / 1px,
+                            self.mouse-x / 1px,
+                            self.mouse-y / 1px,
+                        );
+                        accept
+                    }
+                    changed pressed => {
+                        if self.pressed {
+                            root.canvas-pan-begin(self.mouse-x / 1px, self.mouse-y / 1px);
+                        } else {
+                            root.canvas-pan-end();
+                        }
+                    }
+                    moved => {
+                        if self.pressed {
+                            root.canvas-pan-move(self.mouse-x / 1px, self.mouse-y / 1px);
+                        }
+                    }
+                }
+
                 for m[i] in root.canvas-monitors: Rectangle {
                     x: m.x * 1px;
                     y: m.y * 1px;
                     width: m.w * 1px;
                     height: m.h * 1px;
-                    border-radius: 4px;
-                    background: m.ghost ? Theme.tile-bg.with-alpha(0.5) : (m.selected ? Theme.tile-selected : Theme.tile-bg);
-                    border-width: m.selected ? 2px : 1px;
+                    border-radius: Theme.radius-xs;
+                    background: m.ghost
+                        ? Theme.tile-bg.with-alpha(Theme.ghost-alpha)
+                        : (m.selected ? Theme.tile-selected : Theme.tile-bg);
+                    border-width: m.selected ? Theme.border-width-strong : Theme.border-width;
                     border-color: m.selected ? Theme.accent : Theme.border;
 
                     Text {
-                        text: m.label;
+                        text: m.label + (m.origin ? " ★" : "");
                         color: Theme.fg;
-                        font-size: 11px;
+                        font-size: Theme.font-label;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         wrap: word-wrap;
@@ -244,107 +321,168 @@ export component AppWindow inherits Window {
                                 root.canvas-drag-end();
                             }
                         }
+                        scroll-event(ev) => {
+                            root.canvas-zoom(
+                                ev.delta-y / 1px,
+                                m.x + self.mouse-x / 1px,
+                                m.y + self.mouse-y / 1px,
+                            );
+                            accept
+                        }
+                    }
+                }
+
+                for g in root.canvas-guides: Rectangle {
+                    x: g.vertical ? g.pos * 1px : 0px;
+                    y: g.vertical ? 0px : g.pos * 1px;
+                    width: g.vertical ? Theme.border-width : parent.width;
+                    height: g.vertical ? parent.height : Theme.border-width;
+                    background: Theme.accent;
+                }
+
+                KitOverlayBar {
+                    x: parent.width - self.width - Theme.space-md;
+                    y: Theme.space-md;
+                    width: zoom-row.min-width;
+                    height: zoom-row.min-height;
+
+                    zoom-row := KitHStack {
+                        gap: "tight";
+                        center: true;
+                        padding: Theme.space-xs;
+                        KitIconButton {
+                            text: "−";
+                            small: true;
+                            clicked => { root.canvas-zoom-step(-1); }
+                        }
+                        KitMuted {
+                            text: root.canvas-zoom-label;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            min-width: Theme.metric-min-width;
+                        }
+                        KitIconButton {
+                            text: "+";
+                            small: true;
+                            clicked => { root.canvas-zoom-step(1); }
+                        }
+                        KitButton {
+                            text: "Fit";
+                            small: true;
+                            clicked => { root.canvas-fit(); }
+                        }
                     }
                 }
             }
 
-            Rectangle {
-                horizontal-stretch: 1;
-                min-width: 280px;
-                background: Theme.panel-bg;
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: Theme.border;
+            KitSidePanel {
+                ScrollView {
+                    width: 100%;
+                    height: 100%;
+                    KitVStack {
+                        gap: "form";
+                        padding: Theme.space-md;
 
-                VerticalBox {
-                    padding: 14px;
-                    spacing: 10px;
-
-                    Text {
-                        text: root.insp-label == "" ? "Select a monitor" : root.insp-label;
-                        color: Theme.fg;
-                        font-size: 15px;
-                        font-weight: 600;
-                    }
-
-                    Text { text: "Mode"; color: Theme.fg-muted; font-size: 11px; }
-                    ComboBox {
-                        model: root.insp-modes;
-                        current-index: root.insp-mode-index;
-                        selected => { root.insp-mode-changed(self.current-index); }
-                    }
-
-                    Text { text: "Scale"; color: Theme.fg-muted; font-size: 11px; }
-                    LineEdit {
-                        text: root.insp-scale;
-                        edited => { root.insp-scale-changed(self.text); }
-                    }
-                    if root.insp-snap != "": Text {
-                        text: root.insp-snap;
-                        color: Theme.fg-muted;
-                        font-size: 11px;
-                    }
-
-                    Text { text: "Rotate"; color: Theme.fg-muted; font-size: 11px; }
-                    ComboBox {
-                        model: root.insp-rotates;
-                        current-index: root.insp-rotate-index;
-                        selected => { root.insp-rotate-changed(self.current-index); }
-                    }
-
-                    Text { text: "Position"; color: Theme.fg-muted; font-size: 11px; }
-                    HorizontalBox {
-                        LineEdit {
-                            text: root.insp-pos-x;
-                            edited => { root.insp-pos-changed(self.text, root.insp-pos-y); }
+                        KitTitle {
+                            text: root.insp-label == "" ? "Select a monitor" : root.insp-label;
                         }
-                        LineEdit {
-                            text: root.insp-pos-y;
-                            edited => { root.insp-pos-changed(root.insp-pos-x, self.text); }
+
+                        KitField {
+                            label: "Mode";
+                            KitComboBox {
+                                model: root.insp-modes;
+                                current-index: root.insp-mode-index;
+                                selected(i) => { root.insp-mode-changed(i); }
+                            }
                         }
-                    }
 
-                    Button {
-                        text: "Center to neighbor";
-                        enabled: root.selected-index >= 0;
-                        clicked => { root.center-to-neighbor(); }
-                    }
-
-                    CheckBox {
-                        text: "Enabled";
-                        checked: root.insp-enabled;
-                        toggled => { root.insp-enabled-changed(self.checked); }
-                    }
-
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.show-advanced = !root.show-advanced; }
-                        Text {
-                            text: root.show-advanced ? "▾ Match / advanced" : "▸ Match / advanced";
-                            color: Theme.fg-muted;
-                            font-size: 12px;
+                        KitField {
+                            label: "Scale";
+                            hint: root.insp-snap;
+                            KitLineEdit {
+                                text: root.insp-scale;
+                                edited(t) => { root.insp-scale-changed(t); }
+                            }
                         }
-                    }
-                    if root.show-advanced: Text {
-                        text: root.insp-match;
-                        color: Theme.fg-muted;
-                        font-size: 11px;
-                        wrap: word-wrap;
+
+                        KitField {
+                            label: "Rotate";
+                            KitComboBox {
+                                model: root.insp-rotates;
+                                current-index: root.insp-rotate-index;
+                                selected(i) => { root.insp-rotate-changed(i); }
+                            }
+                        }
+
+                        KitField {
+                            label: "Position";
+                            KitHStack {
+                                gap: "tight";
+                                KitLineEdit {
+                                    text: root.insp-pos-x;
+                                    edited(t) => { root.insp-pos-changed(t, root.insp-pos-y); }
+                                }
+                                KitLineEdit {
+                                    text: root.insp-pos-y;
+                                    edited(t) => { root.insp-pos-changed(root.insp-pos-x, t); }
+                                }
+                            }
+                        }
+
+                        KitVStack {
+                            gap: "tight";
+                            vertical-stretch: 0;
+                            KitButton {
+                                text: root.insp-is-origin ? "Origin (0×0)" : "Set as origin (0×0)";
+                                horizontal-stretch: 1;
+                                enabled: root.selected-index >= 0 && !root.insp-is-origin;
+                                clicked => { root.set-as-origin(); }
+                            }
+                            KitLabel {
+                                text: "Rebases layout to 0×0 for X11 / Xwayland.";
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        KitField {
+                            label: "Helpers";
+                            KitCheckBox {
+                                text: "Snap edges while dragging";
+                                checked: root.helper-snap-edges;
+                                toggled(v) => { root.helper-snap-edges = v; }
+                            }
+                            KitCheckBox {
+                                text: "Snap centers while dragging";
+                                checked: root.helper-snap-centers;
+                                toggled(v) => { root.helper-snap-centers = v; }
+                            }
+                            KitAlignPad {
+                                enabled: root.selected-index >= 0;
+                                place(op) => { root.align-to-neighbor(op); }
+                            }
+                        }
+
+                        KitCheckBox {
+                            text: "Enabled";
+                            checked: root.insp-enabled;
+                            toggled(v) => { root.insp-enabled-changed(v); }
+                        }
+
+                        KitDisclosure {
+                            label: "Match / advanced";
+                            open <=> root.show-advanced;
+                        }
+                        if root.show-advanced: KitLabel {
+                            text: root.insp-match;
+                            wrap: word-wrap;
+                        }
                     }
                 }
             }
         }
 
-        Text {
-            text: root.warnings;
-            color: Theme.secondary;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        Text {
-            text: root.status-text;
-            color: Theme.fg-muted;
-            font-size: 12px;
+        KitWarning { text: root.warnings; }
+        KitMuted { text: root.status-text; }
         }
     }
 }
