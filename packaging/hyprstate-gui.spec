@@ -41,11 +41,25 @@ and is not part of this package.
 # -a1 unpacks the vendor tarball (vendor/ at its root) into the source dir.
 %autosetup -p1 -a1
 %cargo_prep -v vendor
-# %%cargo_prep only redirects crates-io. Git pins (hyprstate-fsm, slint-kit,
-# monitor-profiles) are vendored too; merge those replace-with stanzas.
-if [ -f vendor/config.toml ]; then
-    awk 'BEGIN{p=0} /^\[source\./{p=($0 ~ /git/)} p{print}' vendor/config.toml >> .cargo/config.toml
-fi
+# %%cargo_prep only redirects crates.io. Git pins are vendored in Source1
+# too; map them so the RPM build stays offline.
+cat >> .cargo/config.toml << 'EOF'
+
+[source."git+https://github.com/MasonRhodesDev/monitor-profiles?rev=aef5f0e"]
+git = "https://github.com/MasonRhodesDev/monitor-profiles"
+rev = "aef5f0e"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/MasonRhodesDev/hyprstate?rev=38172c2797ac905dfcd04bf5e58b485644d10a2c"]
+git = "https://github.com/MasonRhodesDev/hyprstate"
+rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c"
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=5e3a3a9c7e41585d681149b80070128f0987f0c8"]
+git = "https://github.com/MasonRhodesDev/slint-kit"
+rev = "5e3a3a9c7e41585d681149b80070128f0987f0c8"
+replace-with = "vendored-sources"
+EOF
 
 %build
 %cargo_build
