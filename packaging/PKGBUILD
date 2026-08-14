@@ -18,7 +18,7 @@ makedepends=('cargo' 'git' 'clang' 'python' 'ninja' 'cmake' 'pkgconf' 'fontconfi
 checkdepends=('desktop-file-utils')
 optdepends=('hyprstate: session apply and power overrides')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP') # pin on release: updpkgsums
+sha256sums=('3cafd93bcd497c8a16a947dd82de22a5c5eac76c799eafd5408ef4fd0a261f6a')
 
 prepare() {
   cd "$pkgname-$pkgver"
