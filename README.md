@@ -8,6 +8,10 @@ there is no separate Apply.
 
 UX: see `monitor-profiles` planning docs (Displays visual review board).
 
+![Canvas editor for the current desk](docs/screenshots/editor.png)
+
+![Inspector for the selected output](docs/screenshots/inspector.png)
+
 ## Run
 
 ```sh
