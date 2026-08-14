@@ -26,7 +26,6 @@ BuildRequires:  wayland-devel
 BuildRequires:  mesa-libGL-devel
 BuildRequires:  mesa-libEGL-devel
 BuildRequires:  libstdc++-devel
-Requires:       libxkbcommon
 Requires:       mesa-libGL
 Requires:       fontconfig
 Recommends:     hyprstate
