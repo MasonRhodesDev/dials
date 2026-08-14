@@ -20,7 +20,9 @@ UX: see `monitor-profiles` planning docs (Displays visual review board).
 cargo run --release
 ```
 
-Requires `hyprctl` on `PATH` (Hyprland session).
+Requires `hyprctl` on `PATH` (Hyprland session). Packaged Fedora/Arch
+installs put the binary in `/usr/bin` and a Settings desktop entry in
+`/usr/share/applications`.
 
 ## MVP
 

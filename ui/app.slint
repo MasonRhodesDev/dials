@@ -10,8 +10,10 @@ import {
     KitOverlayBar, KitSidePanel, Panel
 } from "widgets.slint";
 import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { PowerPage } from "power.slint";
+import { HelpPage, HelpNode, HelpEdge } from "help.slint";
 
-export { Theme, Palette }
+export { Theme, Palette, HelpNode, HelpEdge }
 
 export struct ProfileRow {
     name: string,
@@ -38,7 +40,7 @@ export struct CanvasGuide {
 }
 
 export component AppWindow inherits Window {
-    title: "hyprstate — Displays";
+    title: "hyprstate";
     preferred-width: 1100px;
     preferred-height: 720px;
     background: Theme.page-bg;
@@ -81,6 +83,46 @@ export component AppWindow inherits Window {
     in-out property <string> warnings: "";
     in-out property <string> canvas-zoom-label: "100%";
 
+    in-out property <int> section: 0;
+    in-out property <string> now-lid: "";
+    in-out property <string> now-ac: "";
+    in-out property <string> now-battery: "";
+    in-out property <string> now-base: "";
+    in-out property <string> now-desired: "";
+    in-out property <string> now-applied: "";
+    in-out property <string> now-override: "";
+    in-out property <int> docked-ac-index: 1;
+    in-out property <int> ac-index: 1;
+    in-out property <int> battery-index: 0;
+    in-out property <int> battery-low-index: 0;
+    in-out property <string> low-percent: "15";
+    in-out property <[string]> lid-sensors: [];
+    in-out property <int> lid-sensor-index: 0;
+    in-out property <[string]> ac-sensors: [];
+    in-out property <int> ac-sensor-index: 0;
+    in-out property <[string]> battery-sensors: [];
+    in-out property <int> battery-sensor-index: 0;
+    in-out property <bool> show-sensors: false;
+    in-out property <[HelpNode]> help-lid-nodes: [];
+    in-out property <[HelpEdge]> help-lid-muted-edges: [];
+    in-out property <[HelpEdge]> help-lid-lit-edges: [];
+    in-out property <float> help-lid-width: 1;
+    in-out property <float> help-lid-height: 1;
+    in-out property <[HelpNode]> help-power-nodes: [];
+    in-out property <[HelpEdge]> help-power-muted-edges: [];
+    in-out property <[HelpEdge]> help-power-lit-edges: [];
+    in-out property <float> help-power-width: 1;
+    in-out property <float> help-power-height: 1;
+    in-out property <[HelpNode]> help-display-nodes: [];
+    in-out property <[HelpEdge]> help-display-muted-edges: [];
+    in-out property <[HelpEdge]> help-display-lit-edges: [];
+    in-out property <float> help-display-width: 1;
+    in-out property <float> help-display-height: 1;
+    in-out property <string> help-status-text: "";
+    in-out property <string> help-lid-now: "";
+    in-out property <string> help-power-now: "";
+    in-out property <string> help-display-now: "";
+
     callback open-profile(int);
     callback open-current-desk();
     callback back-to-list();
@@ -105,6 +147,15 @@ export component AppWindow inherits Window {
     callback canvas-pan-begin(float, float);
     callback canvas-pan-move(float, float);
     callback canvas-pan-end();
+    callback policy-changed();
+    callback low-percent-changed(string);
+    callback sensor-lid-changed(int);
+    callback sensor-ac-changed(int);
+    callback sensor-battery-changed(int);
+    callback override-set(string);
+    callback override-clear();
+    callback override-cycle();
+    callback section-changed(int);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -112,12 +163,50 @@ export component AppWindow inherits Window {
         height: root.height;
         background: Theme.page-bg;
 
-    if !root.show-editor: VerticalBox {
+        VerticalLayout {
+            width: 100%;
+            height: 100%;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            KitToolbar {
+                KitButton {
+                    text: "Displays";
+                    primary: root.section == 0;
+                    clicked => {
+                        root.section = 0;
+                        root.section-changed(0);
+                    }
+                }
+                KitButton {
+                    text: "Power";
+                    primary: root.section == 1;
+                    clicked => {
+                        root.section = 1;
+                        root.section-changed(1);
+                    }
+                }
+                KitButton {
+                    text: "Help";
+                    primary: root.section == 2;
+                    clicked => {
+                        root.section = 2;
+                        root.section-changed(2);
+                    }
+                }
+                KitSpacer { axis: "horizontal"; }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                width: 100%;
+
+    if root.section == 0 && !root.show-editor: VerticalBox {
             x: 0;
             y: 0;
-            width: root.width;
-            height: root.height;
-            padding: Theme.page-pad;
+            width: 100%;
+            height: 100%;
+            padding: 0;
             spacing: Theme.space-lg;
 
             KitDisplay { text: "Profiles"; }
@@ -160,12 +249,12 @@ export component AppWindow inherits Window {
             KitMuted { text: root.status-text; }
         }
 
-    if root.show-editor: VerticalBox {
+    if root.section == 0 && root.show-editor: VerticalBox {
             x: 0;
             y: 0;
-            width: root.width;
-            height: root.height;
-            padding: Theme.space-lg;
+            width: 100%;
+            height: 100%;
+            padding: 0;
             spacing: Theme.space-md;
 
         KitToolbar {
@@ -254,6 +343,7 @@ export component AppWindow inherits Window {
 
             Panel {
                 variant: "canvas";
+                clip: true;
                 horizontal-stretch: 6;
 
                 changed width => {
@@ -262,6 +352,12 @@ export component AppWindow inherits Window {
                 changed height => {
                     root.canvas-resized(self.width / 1px, self.height / 1px);
                 }
+
+                // Clip tiles/guides only — not the overlay (Panel clip + layout text = Slint #10499).
+                Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    clip: true;
 
                 TouchArea {
                     width: parent.width;
@@ -346,6 +442,7 @@ export component AppWindow inherits Window {
                     width: g.vertical ? Theme.border-width : parent.width;
                     height: g.vertical ? parent.height : Theme.border-width;
                     background: Theme.accent;
+                }
                 }
 
                 KitOverlayBar {
@@ -491,6 +588,73 @@ export component AppWindow inherits Window {
 
         KitWarning { text: root.warnings; }
         KitMuted { text: root.status-text; }
+        }
+
+    if root.section == 1: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            PowerPage {
+                now-lid: root.now-lid;
+                now-ac: root.now-ac;
+                now-battery: root.now-battery;
+                now-base: root.now-base;
+                now-desired: root.now-desired;
+                now-applied: root.now-applied;
+                now-override: root.now-override;
+                docked-ac-index <=> root.docked-ac-index;
+                ac-index <=> root.ac-index;
+                battery-index <=> root.battery-index;
+                battery-low-index <=> root.battery-low-index;
+                low-percent <=> root.low-percent;
+                lid-sensors: root.lid-sensors;
+                lid-sensor-index <=> root.lid-sensor-index;
+                ac-sensors: root.ac-sensors;
+                ac-sensor-index <=> root.ac-sensor-index;
+                battery-sensors: root.battery-sensors;
+                battery-sensor-index <=> root.battery-sensor-index;
+                show-sensors <=> root.show-sensors;
+                status-text: root.status-text;
+                policy-changed => { root.policy-changed(); }
+                low-percent-changed(t) => { root.low-percent-changed(t); }
+                sensor-lid-changed(i) => { root.sensor-lid-changed(i); }
+                sensor-ac-changed(i) => { root.sensor-ac-changed(i); }
+                sensor-battery-changed(i) => { root.sensor-battery-changed(i); }
+                override-set(p) => { root.override-set(p); }
+                override-clear => { root.override-clear(); }
+                override-cycle => { root.override-cycle(); }
+            }
+        }
+
+    if root.section == 2: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            HelpPage {
+                status-text: root.help-status-text;
+                lid-now: root.help-lid-now;
+                power-now: root.help-power-now;
+                display-now: root.help-display-now;
+                lid-nodes: root.help-lid-nodes;
+                lid-muted-edges: root.help-lid-muted-edges;
+                lid-lit-edges: root.help-lid-lit-edges;
+                lid-width: root.help-lid-width;
+                lid-height: root.help-lid-height;
+                power-nodes: root.help-power-nodes;
+                power-muted-edges: root.help-power-muted-edges;
+                power-lit-edges: root.help-power-lit-edges;
+                power-width: root.help-power-width;
+                power-height: root.help-power-height;
+                display-nodes: root.help-display-nodes;
+                display-muted-edges: root.help-display-muted-edges;
+                display-lit-edges: root.help-display-lit-edges;
+                display-width: root.help-display-width;
+                display-height: root.help-display-height;
+            }
+        }
+            }
         }
     }
 }

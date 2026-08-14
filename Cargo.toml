@@ -1,6 +1,6 @@
 [package]
 name = "hyprstate-gui"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Displays configurator for hyprstate — edit shared monitor-profiles TOML"
@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
+# Git pins (not path) so RPM/PKGBUILD can vendor from a git-archive tarball.
+hyprstate-fsm = { git = "https://github.com/MasonRhodesDev/hyprstate", rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c" }
 slint = { version = "1.17", default-features = false, features = [
     "std",
     "backend-winit",
@@ -16,10 +18,10 @@ slint = { version = "1.17", default-features = false, features = [
     "accessibility",
     "compat-1-2",
 ] }
-slint-kit = { path = "../slint-kit" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5e3a3a9c7e41585d681149b80070128f0987f0c8" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [build-dependencies]
 slint-build = "1.17"
-slint-kit = { path = "../slint-kit" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5e3a3a9c7e41585d681149b80070128f0987f0c8" }

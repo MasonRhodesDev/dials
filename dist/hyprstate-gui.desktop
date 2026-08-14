@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=hyprstate
+GenericName=Display and power settings
+Comment=Configure Hyprland displays and power policy
+Exec=hyprstate-gui
+TryExec=hyprstate-gui
+Icon=preferences-desktop-display
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=Hyprland;monitor;display;power;
+StartupNotify=true
+StartupWMClass=hyprstate

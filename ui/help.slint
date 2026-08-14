@@ -1,0 +1,195 @@
+import { Theme } from "theme.slint";
+import {
+    KitMuted, KitTitle, KitSpacer
+} from "widgets.slint";
+
+export struct HelpNode {
+    id: string,
+    caption: string,
+    label: string,
+    kind: string,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    active: bool,
+}
+
+export struct HelpEdge {
+    id: string,
+    commands: string,
+    active: bool,
+}
+
+export component HelpGraph inherits VerticalLayout {
+    in property <string> heading;
+    in property <string> now-text: "";
+    in property <string> rules-note: "First true rule wins.";
+    in property <[HelpNode]> nodes: [];
+    in property <[HelpEdge]> muted-edges: [];
+    in property <[HelpEdge]> lit-edges: [];
+    in property <float> graph-width: 1;
+    in property <float> graph-height: 1;
+    spacing: Theme.space-sm;
+    alignment: start;
+    vertical-stretch: 0;
+    width: 100%;
+
+    KitTitle { text: root.heading; }
+    if root.now-text != "": KitMuted {
+        text: root.now-text;
+        wrap-text: true;
+    }
+    if root.rules-note != "": KitMuted {
+        text: root.rules-note;
+        wrap-text: true;
+    }
+    Rectangle {
+        width: root.graph-width * 1px;
+        height: root.graph-height * 1px;
+        vertical-stretch: 0;
+        clip: false;
+        background: transparent;
+
+        // Two passes: muted under, lit over. Shared gutters must not bury
+        // active vertical/horizontal segments.
+        for e in root.muted-edges: Path {
+            x: 0;
+            y: 0;
+            width: root.graph-width * 1px;
+            height: root.graph-height * 1px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: root.graph-width;
+            viewbox-height: root.graph-height;
+            commands: e.commands;
+            fill: transparent;
+            stroke: Theme.fg-muted;
+            stroke-width: 2px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        for e in root.lit-edges: Path {
+            x: 0;
+            y: 0;
+            width: root.graph-width * 1px;
+            height: root.graph-height * 1px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: root.graph-width;
+            viewbox-height: root.graph-height;
+            commands: e.commands;
+            fill: transparent;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+            animate stroke { duration: 180ms; }
+        }
+
+        for n in root.nodes: Rectangle {
+            x: n.x * 1px;
+            y: n.y * 1px;
+            width: n.w * 1px;
+            height: n.h * 1px;
+            border-radius: Theme.radius-xs;
+            border-width: n.active ? Theme.border-width-strong : Theme.border-width;
+            border-color: n.active ? Theme.accent : Theme.border;
+            background: n.active ? Theme.tile-selected : Theme.tile-bg;
+            animate border-color { duration: 180ms; }
+            animate background { duration: 180ms; }
+
+            VerticalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-2xs;
+                alignment: start;
+                width: 100%;
+                if n.caption != "": Text {
+                    text: n.caption;
+                    color: Theme.fg-muted;
+                    font-size: Theme.font-label;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                }
+                Text {
+                    text: n.label;
+                    color: n.active ? Theme.fg : Theme.fg-muted;
+                    font-size: (n.kind == "fn" || n.kind == "logic") ? Theme.font-label : Theme.font-body;
+                    font-weight: n.active ? Theme.font-weight-semibold : 400;
+                    horizontal-alignment: left;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    animate color { duration: 180ms; }
+                }
+            }
+        }
+    }
+}
+
+export component HelpPage inherits VerticalLayout {
+    in property <string> status-text: "";
+    in property <string> lid-now: "";
+    in property <string> power-now: "";
+    in property <string> display-now: "";
+    in property <[HelpNode]> lid-nodes: [];
+    in property <[HelpEdge]> lid-muted-edges: [];
+    in property <[HelpEdge]> lid-lit-edges: [];
+    in property <float> lid-width: 1;
+    in property <float> lid-height: 1;
+    in property <[HelpNode]> power-nodes: [];
+    in property <[HelpEdge]> power-muted-edges: [];
+    in property <[HelpEdge]> power-lit-edges: [];
+    in property <float> power-width: 1;
+    in property <float> power-height: 1;
+    in property <[HelpNode]> display-nodes: [];
+    in property <[HelpEdge]> display-muted-edges: [];
+    in property <[HelpEdge]> display-lit-edges: [];
+    in property <float> display-width: 1;
+    in property <float> display-height: 1;
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitTitle { text: "How state is chosen"; }
+    KitMuted {
+        text: "Now is the live session. Rules show how live inputs resolve. Lit path follows hyprstate daemon telemetry.";
+        wrap-text: true;
+    }
+    if root.status-text != "": KitMuted {
+        text: root.status-text;
+        wrap-text: true;
+    }
+
+    HelpGraph {
+        heading: "Idle";
+        now-text: root.lid-now;
+        rules-note: "Rules: lid and dock choose a path. Terminals are idle/sleep or defer/awake. 30s grace precedes idle/sleep when undocked.";
+        nodes: root.lid-nodes;
+        muted-edges: root.lid-muted-edges;
+        lit-edges: root.lid-lit-edges;
+        graph-width: root.lid-width;
+        graph-height: root.lid-height;
+    }
+    HelpGraph {
+        heading: "Power";
+        now-text: root.power-now;
+        rules-note: "Rules: first true base wins. power.conf maps that base to a profile; a manual override replaces the map.";
+        nodes: root.power-nodes;
+        muted-edges: root.power-muted-edges;
+        lit-edges: root.power-lit-edges;
+        graph-width: root.power-width;
+        graph-height: root.power-height;
+    }
+    HelpGraph {
+        heading: "Displays";
+        now-text: root.display-now;
+        rules-note: "Rules: every match prefix must fit the signature. Winner ranks by priority, then prefix count, then name — all descending.";
+        nodes: root.display-nodes;
+        muted-edges: root.display-muted-edges;
+        lit-edges: root.display-lit-edges;
+        graph-width: root.display-width;
+        graph-height: root.display-height;
+    }
+    KitSpacer { axis: "vertical"; }
+}

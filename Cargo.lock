@@ -1820,9 +1820,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 
 [[package]]
-name = "hyprstate-gui"
-version = "0.2.0"
+name = "hyprstate-fsm"
+version = "2.0.0"
+source = "git+https://github.com/MasonRhodesDev/hyprstate?rev=38172c2797ac905dfcd04bf5e58b485644d10a2c#38172c2797ac905dfcd04bf5e58b485644d10a2c"
 dependencies = [
+ "monitor-profiles",
+ "serde",
+]
+
+[[package]]
+name = "hyprstate-gui"
+version = "0.3.0"
+dependencies = [
+ "hyprstate-fsm",
  "monitor-profiles",
  "serde",
  "serde_json",
@@ -4485,6 +4495,7 @@ dependencies = [
 [[package]]
 name = "slint-kit"
 version = "0.2.0"
+source = "git+https://github.com/MasonRhodesDev/slint-kit?rev=5e3a3a9c7e41585d681149b80070128f0987f0c8#5e3a3a9c7e41585d681149b80070128f0987f0c8"
 dependencies = [
  "dirs",
  "notify",

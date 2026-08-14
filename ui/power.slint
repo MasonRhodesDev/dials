@@ -1,0 +1,190 @@
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitComboBox, KitLineEdit,
+    KitMuted, KitTitle, KitLabel, KitField, KitDisclosure,
+    KitVStack, KitHStack, KitSpacer
+} from "widgets.slint";
+
+export component PowerPage inherits VerticalLayout {
+    in property <string> now-lid;
+    in property <string> now-ac;
+    in property <string> now-battery;
+    in property <string> now-base;
+    in property <string> now-desired;
+    in property <string> now-applied;
+    in property <string> now-override;
+    in property <[string]> profiles: ["power-saver", "balanced", "performance"];
+    in-out property <int> docked-ac-index: 1;
+    in-out property <int> ac-index: 1;
+    in-out property <int> battery-index: 0;
+    in-out property <int> battery-low-index: 0;
+    in-out property <string> low-percent: "15";
+    in property <[string]> lid-sensors: [];
+    in-out property <int> lid-sensor-index: 0;
+    in property <[string]> ac-sensors: [];
+    in-out property <int> ac-sensor-index: 0;
+    in property <[string]> battery-sensors: [];
+    in-out property <int> battery-sensor-index: 0;
+    in-out property <bool> show-sensors: false;
+    in property <string> status-text;
+
+    callback policy-changed();
+    callback low-percent-changed(string);
+    callback sensor-lid-changed(int);
+    callback sensor-ac-changed(int);
+    callback sensor-battery-changed(int);
+    callback override-set(string);
+    callback override-clear();
+    callback override-cycle();
+
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitTitle { text: "Power"; }
+    KitMuted {
+        text: "Policy map for hyprstate. The daemon applies it; this page does not talk to powerd as root.";
+        wrap-text: true;
+    }
+
+    KitVStack {
+        gap: "tight";
+        KitLabel { text: "Now"; }
+        KitMuted { text: root.now-lid; wrap-text: true; }
+        KitMuted { text: root.now-ac; wrap-text: true; }
+        KitMuted { text: root.now-battery; wrap-text: true; }
+        KitMuted { text: "base " + root.now-base + " → " + root.now-desired; wrap-text: true; }
+        KitMuted { text: "applied " + root.now-applied; wrap-text: true; }
+        KitMuted { text: "override " + root.now-override; wrap-text: true; }
+    }
+
+    KitVStack {
+        gap: "form";
+        KitLabel { text: "Policy"; }
+        KitField {
+            label: "docked-ac";
+            KitComboBox {
+                model: root.profiles;
+                current-index: root.docked-ac-index;
+                selected(i) => {
+                    root.docked-ac-index = i;
+                    root.policy-changed();
+                }
+            }
+        }
+        KitField {
+            label: "ac";
+            KitComboBox {
+                model: root.profiles;
+                current-index: root.ac-index;
+                selected(i) => {
+                    root.ac-index = i;
+                    root.policy-changed();
+                }
+            }
+        }
+        KitField {
+            label: "battery";
+            KitComboBox {
+                model: root.profiles;
+                current-index: root.battery-index;
+                selected(i) => {
+                    root.battery-index = i;
+                    root.policy-changed();
+                }
+            }
+        }
+        KitField {
+            label: "battery-low";
+            KitComboBox {
+                model: root.profiles;
+                current-index: root.battery-low-index;
+                selected(i) => {
+                    root.battery-low-index = i;
+                    root.policy-changed();
+                }
+            }
+        }
+        KitField {
+            label: "battery-low-percent";
+            KitLineEdit {
+                text: root.low-percent;
+                edited(t) => { root.low-percent-changed(t); }
+            }
+        }
+    }
+
+    KitHStack {
+        gap: "form";
+        KitButton {
+            text: "Power saver";
+            clicked => { root.override-set("power-saver"); }
+        }
+        KitButton {
+            text: "Balanced";
+            clicked => { root.override-set("balanced"); }
+        }
+        KitButton {
+            text: "Performance";
+            clicked => { root.override-set("performance"); }
+        }
+        KitButton {
+            text: "Cycle";
+            clicked => { root.override-cycle(); }
+        }
+        KitButton {
+            text: "Auto";
+            primary: true;
+            clicked => { root.override-clear(); }
+        }
+    }
+
+    KitDisclosure {
+        label: "Sensors";
+        open <=> root.show-sensors;
+    }
+    if root.show-sensors: KitVStack {
+        gap: "form";
+        KitMuted {
+            text: "Auto uses the same defaults as hyprstate (logind lid, A* adapter, first battery). Pick a device only if detection is wrong.";
+            wrap-text: true;
+        }
+        KitField {
+            label: "Lid";
+            KitComboBox {
+                model: root.lid-sensors;
+                current-index: root.lid-sensor-index;
+                selected(i) => {
+                    root.lid-sensor-index = i;
+                    root.sensor-lid-changed(i);
+                }
+            }
+        }
+        KitField {
+            label: "AC adapter";
+            KitComboBox {
+                model: root.ac-sensors;
+                current-index: root.ac-sensor-index;
+                selected(i) => {
+                    root.ac-sensor-index = i;
+                    root.sensor-ac-changed(i);
+                }
+            }
+        }
+        KitField {
+            label: "Battery";
+            KitComboBox {
+                model: root.battery-sensors;
+                current-index: root.battery-sensor-index;
+                selected(i) => {
+                    root.battery-sensor-index = i;
+                    root.sensor-battery-changed(i);
+                }
+            }
+        }
+    }
+
+    KitMuted { text: root.status-text; }
+    KitSpacer { axis: "vertical"; }
+}

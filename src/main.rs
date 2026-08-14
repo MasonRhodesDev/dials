@@ -1,19 +1,24 @@
 //! hyprstate-gui — Displays configurator (MVP).
 mod align;
 mod canvas;
+mod help_graph;
 mod hyprctl;
+mod power_io;
 mod profiles_io;
+mod sensors;
+mod telemetry;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use hyprstate_fsm::power::{PowerPolicy, PowerProfile, power_base_state};
 use monitor_profiles::{
     ConnectedOutput, Mode, Monitor, Profile, ResolvedOutput, match_in_signature, resolve, select,
 };
 use profiles_io::{ListedProfile, load_merged, write_atomic};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use slint_kit::{apply_theme, ThemeBridge};
+use slint_kit::{ThemeBridge, apply_theme};
 
 slint::include_modules!();
 
@@ -48,6 +53,8 @@ struct AppState {
     canvas_model: Rc<VecModel<CanvasMonitor>>,
     canvas_w: f32,
     canvas_h: f32,
+    sensor_picks: sensors::SensorPicks,
+    help_live: telemetry::HelpLive,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,6 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         canvas_model,
         canvas_w: 720.0,
         canvas_h: 520.0,
+        sensor_picks: sensors::load_picks(),
+        help_live: telemetry::HelpLive::default(),
     }));
 
     refresh_list(&ui, &state);
@@ -321,30 +330,159 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_policy_changed(move || {
+            let ui = ui_weak.unwrap();
+            save_power_policy(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_low_percent_changed(move |text| {
+            let ui = ui_weak.unwrap();
+            ui.set_low_percent(text);
+            save_power_policy(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_sensor_lid_changed(move |i| {
+            let ui = ui_weak.unwrap();
+            set_sensor_pick(&ui, &state, SensorKind::Lid, i);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_sensor_ac_changed(move |i| {
+            let ui = ui_weak.unwrap();
+            set_sensor_pick(&ui, &state, SensorKind::Ac, i);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_sensor_battery_changed(move |i| {
+            let ui = ui_weak.unwrap();
+            set_sensor_pick(&ui, &state, SensorKind::Battery, i);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_override_set(move |profile| {
+            let ui = ui_weak.unwrap();
+            run_override(&ui, &state, profile.as_str());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_override_clear(move || {
+            let ui = ui_weak.unwrap();
+            run_override(&ui, &state, "auto");
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_override_cycle(move || {
+            let ui = ui_weak.unwrap();
+            run_override(&ui, &state, "cycle");
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_section_changed(move |section| {
+            let ui = ui_weak.unwrap();
+            if section == 1 {
+                refresh_power(&ui, &state);
+            }
+            if section == 2 {
+                apply_help_from_live(&ui, &state);
+            }
+        });
+    }
+
+    load_policy_ui(&ui);
+    refresh_power(&ui, &state);
+    apply_help_from_live(&ui, &state);
 
     // Poll after save for session convergence.
     let ui_weak = ui.as_weak();
     let state_poll = state.clone();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, Duration::from_millis(500), move || {
-        let Some(ui) = ui_weak.upgrade() else {
-            return;
-        };
-        let mut st = state_poll.borrow_mut();
-        let Some(started) = st.save_wait else {
-            return;
-        };
-        if started.elapsed() > Duration::from_secs(8) {
-            st.save_wait = None;
-            ui.set_status_text("Saved; session hasn’t picked it up yet.".into());
-            return;
-        }
-        if session_matches_editor(&st) {
-            st.save_wait = None;
-            ui.set_status_text("Session updated.".into());
-        }
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(500),
+        move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut st = state_poll.borrow_mut();
+            let Some(started) = st.save_wait else {
+                return;
+            };
+            if started.elapsed() > Duration::from_secs(8) {
+                st.save_wait = None;
+                ui.set_status_text("Saved; session hasn’t picked it up yet.".into());
+                return;
+            }
+            if session_matches_editor(&st) {
+                st.save_wait = None;
+                ui.set_status_text("Session updated.".into());
+            }
+        },
+    );
     std::mem::forget(timer);
+
+    let ui_weak = ui.as_weak();
+    let state_poll = state.clone();
+    let power_timer = slint::Timer::default();
+    power_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(1),
+        move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            if ui.get_section() == 1 {
+                refresh_power(&ui, &state_poll);
+            }
+        },
+    );
+    std::mem::forget(power_timer);
+
+    let (telem_tx, telem_rx) = std::sync::mpsc::channel::<telemetry::HelpLive>();
+    telemetry::spawn(telem_tx);
+    let ui_weak = ui.as_weak();
+    let state_poll = state.clone();
+    let telem_timer = slint::Timer::default();
+    telem_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(50),
+        move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut latest = None;
+            while let Ok(frame) = telem_rx.try_recv() {
+                latest = Some(frame);
+            }
+            let Some(frame) = latest else {
+                return;
+            };
+            state_poll.borrow_mut().help_live = frame;
+            // Always refresh Help models so opening the tab is already current.
+            apply_help_from_live(&ui, &state_poll);
+        },
+    );
+    std::mem::forget(telem_timer);
 
     ui.run()?;
     Ok(())
@@ -665,11 +803,7 @@ fn short_label(output: &str) -> String {
 fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let st = state.borrow_mut();
     let outs = editor_outputs(&st);
-    let view = st
-        .editor
-        .as_ref()
-        .map(|e| e.view)
-        .unwrap_or_default();
+    let view = st.editor.as_ref().map(|e| e.view).unwrap_or_default();
     let drawn = canvas::layout_drawn(&outs, view);
     let selected = st.editor.as_ref().map(|e| e.selected).unwrap_or(0);
     let model = st.canvas_model.clone();
@@ -986,10 +1120,7 @@ fn parse_mode_parts(s: &str) -> (u64, u64, u64) {
         .map(|(h, hz)| (h, hz))
         .unwrap_or((rest, "0"));
     let h = h_str.parse().unwrap_or(0);
-    let hz = hz_str
-        .parse::<f64>()
-        .map(|f| f.round() as u64)
-        .unwrap_or(0);
+    let hz = hz_str.parse::<f64>().map(|f| f.round() as u64).unwrap_or(0);
     (w, h, hz)
 }
 
@@ -1161,9 +1292,10 @@ fn rename_profile(ui: &AppWindow, state: &Rc<RefCell<AppState>>, raw: SharedStri
         if ed.profile.name == name {
             return;
         }
-        let conflict = st.listed.iter().any(|l| {
-            sanitize_profile_name(&l.profile.name) == stem && l.path != ed.listed.path
-        });
+        let conflict = st
+            .listed
+            .iter()
+            .any(|l| sanitize_profile_name(&l.profile.name) == stem && l.path != ed.listed.path);
         if conflict {
             drop(st);
             ui.set_status_text(format!("Profile “{stem}” already exists.").into());
@@ -1279,9 +1411,7 @@ fn promote_to_shared(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         return;
     }
     if let Err(e) = profiles_io::remove_file(&user_path) {
-        ui.set_status_text(format!(
-            "Wrote shared, but could not remove user copy: {e}"
-        ).into());
+        ui.set_status_text(format!("Wrote shared, but could not remove user copy: {e}").into());
     }
     if let Some(ed) = state.borrow_mut().editor.as_mut() {
         ed.listed.profile = profile;
@@ -1327,4 +1457,408 @@ fn strip_serial_suffix(desc: &str) -> String {
         }
     }
     desc.to_string()
+}
+
+enum SensorKind {
+    Lid,
+    Ac,
+    Battery,
+}
+
+fn profile_at(index: i32) -> PowerProfile {
+    match index {
+        0 => PowerProfile::PowerSaver,
+        2 => PowerProfile::Performance,
+        _ => PowerProfile::Balanced,
+    }
+}
+
+fn profile_index(profile: PowerProfile) -> i32 {
+    match profile {
+        PowerProfile::PowerSaver => 0,
+        PowerProfile::Balanced => 1,
+        PowerProfile::Performance => 2,
+    }
+}
+
+fn parse_low_pct(text: &str) -> Option<u8> {
+    let n: i32 = text.trim().parse().ok()?;
+    if (1..=50).contains(&n) {
+        u8::try_from(n).ok()
+    } else {
+        None
+    }
+}
+
+fn option_labels(options: &[sensors::SensorOption]) -> Vec<SharedString> {
+    options
+        .iter()
+        .map(|o| SharedString::from(o.label.as_str()))
+        .collect()
+}
+
+fn to_help_nodes(nodes: &[help_graph::Node]) -> ModelRc<HelpNode> {
+    ModelRc::new(VecModel::from(
+        nodes
+            .iter()
+            .map(|n| HelpNode {
+                id: n.id.clone().into(),
+                caption: n.caption.clone().into(),
+                label: n.label.clone().into(),
+                kind: n.kind.clone().into(),
+                x: n.x,
+                y: n.y,
+                w: n.w,
+                h: n.h,
+                active: n.active,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+fn to_help_edges(edges: &[help_graph::Edge], active: bool) -> ModelRc<HelpEdge> {
+    ModelRc::new(VecModel::from(
+        edges
+            .iter()
+            .filter(|e| e.active == active)
+            .map(|e| HelpEdge {
+                id: e.id.clone().into(),
+                commands: e.commands.clone().into(),
+                active: e.active,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+fn ext_mon_count(live: &[hyprctl::HyprMonitor]) -> u32 {
+    let n = live.iter().filter(|m| !m.name.starts_with("eDP")).count();
+    u32::try_from(n).unwrap_or(0)
+}
+
+fn display_match_rows(
+    signature: &[String],
+    profiles: &[Profile],
+) -> (Option<String>, Vec<(String, String, String, bool)>) {
+    let mut matching: Vec<&Profile> = profiles
+        .iter()
+        .filter(|p| profile_matches_sig(p, signature))
+        .collect();
+    matching.sort_by(|a, b| {
+        (b.priority, b.matches.len(), &b.name).cmp(&(a.priority, a.matches.len(), &a.name))
+    });
+    let winner_name = matching.first().map(|p| p.name.clone());
+    let rows = matching
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let selected = winner_name.as_deref() == Some(p.name.as_str());
+            let id = format!("m{i}");
+            let caption = if selected {
+                "selected".to_string()
+            } else {
+                "also matches".to_string()
+            };
+            let label = format!(
+                "{} · {} prefixes · priority {}",
+                p.name,
+                p.matches.len(),
+                p.priority
+            );
+            (id, caption, label, selected)
+        })
+        .collect();
+    (winner_name, rows)
+}
+
+fn load_policy_ui(ui: &AppWindow) {
+    let (policy, low_pct, warnings) = power_io::load();
+    ui.set_docked_ac_index(profile_index(policy.docked_ac));
+    ui.set_ac_index(profile_index(policy.ac));
+    ui.set_battery_index(profile_index(policy.battery));
+    ui.set_battery_low_index(profile_index(policy.battery_low));
+    ui.set_low_percent(low_pct.to_string().into());
+    if !warnings.is_empty() {
+        ui.set_status_text(warnings.join(" · ").into());
+    }
+}
+
+fn policy_from_ui(ui: &AppWindow) -> PowerPolicy {
+    PowerPolicy {
+        docked_ac: profile_at(ui.get_docked_ac_index()),
+        ac: profile_at(ui.get_ac_index()),
+        battery: profile_at(ui.get_battery_index()),
+        battery_low: profile_at(ui.get_battery_low_index()),
+    }
+}
+
+fn save_power_policy(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let Some(low_pct) = parse_low_pct(ui.get_low_percent().as_str()) else {
+        ui.set_status_text("battery-low-percent must be 1–50.".into());
+        return;
+    };
+    let policy = policy_from_ui(ui);
+    match power_io::save(&policy, low_pct) {
+        Ok(()) => {
+            ui.set_status_text("Wrote power.conf.".into());
+            refresh_power(ui, state);
+        }
+        Err(e) => ui.set_status_text(format!("power.conf: {e}").into()),
+    }
+}
+
+fn set_sensor_pick(ui: &AppWindow, state: &Rc<RefCell<AppState>>, kind: SensorKind, index: i32) {
+    let picks = state.borrow().sensor_picks.clone();
+    let reading = sensors::read(&picks);
+    let mut next = picks;
+    match kind {
+        SensorKind::Lid => {
+            next.lid = sensors::persist_from_index(&reading.lid_options, index);
+        }
+        SensorKind::Ac => {
+            next.ac = sensors::persist_from_index(&reading.ac_options, index);
+        }
+        SensorKind::Battery => {
+            next.battery = sensors::persist_from_index(&reading.battery_options, index);
+        }
+    }
+    if let Err(e) = sensors::save_picks(&next) {
+        ui.set_status_text(format!("sensors: {e}").into());
+        return;
+    }
+    state.borrow_mut().sensor_picks = next;
+    refresh_power(ui, state);
+}
+
+fn run_override(ui: &AppWindow, state: &Rc<RefCell<AppState>>, action: &str) {
+    match power_io::apply_override(action) {
+        Ok(()) => {
+            ui.set_status_text(format!("power {action}").into());
+            refresh_power(ui, state);
+        }
+        Err(e) => ui.set_status_text(e.into()),
+    }
+}
+
+struct ResolutionSnap {
+    reading: sensors::SensorReading,
+    policy: PowerPolicy,
+    ext: u32,
+    on_ac: bool,
+    low_battery: bool,
+    over: Option<String>,
+    applied: String,
+}
+
+fn sample_resolution(state: &AppState) -> ResolutionSnap {
+    let live = hyprctl::monitors().unwrap_or_else(|_| state.live.clone());
+    let reading = sensors::read(&state.sensor_picks);
+    let (policy, low_pct, _) = power_io::load();
+    let ext = ext_mon_count(&live);
+    let on_ac = reading.on_ac.unwrap_or(true);
+    let low_battery = reading
+        .battery_pct
+        .is_some_and(|pct| pct <= f64::from(low_pct));
+    let over = power_io::override_profile();
+    let applied = power_io::applied_profile().unwrap_or_else(|| "unavailable".into());
+    ResolutionSnap {
+        reading,
+        policy,
+        ext,
+        on_ac,
+        low_battery,
+        over,
+        applied,
+    }
+}
+
+fn apply_help_from_live(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let live = &st.help_live;
+    let (policy, _, _) = power_io::load();
+    let signature = if st.signature.is_empty() {
+        hyprctl::signature(&st.live)
+    } else {
+        st.signature.clone()
+    };
+    let profiles: Vec<Profile> = st.listed.iter().map(|l| l.profile.clone()).collect();
+    let (_winner, match_rows) = display_match_rows(&signature, &profiles);
+    let match_rows = if live.have_frame {
+        telemetry::display_rows(&match_rows, &live.active_profile)
+    } else {
+        match_rows
+            .into_iter()
+            .map(|(id, c, l, _)| (id, c, l, false))
+            .collect()
+    };
+
+    let ext = if live.have_frame {
+        live.ext_mon_count
+    } else {
+        ext_mon_count(&st.live)
+    };
+    let ext_body = if ext == 1 {
+        "1 external".to_string()
+    } else {
+        format!("{ext} externals")
+    };
+    let lid_body = if live.have_frame {
+        if live.lid_closed {
+            String::from("closed · daemon")
+        } else {
+            String::from("open · daemon")
+        }
+    } else {
+        String::from("—")
+    };
+    let inh_body = if live.have_frame {
+        if live.inhibitor {
+            String::from("held · daemon")
+        } else {
+            String::from("idle · none")
+        }
+    } else {
+        String::from("—")
+    };
+    let ac_body = if live.have_frame {
+        if live.on_ac {
+            String::from("plugged · daemon")
+        } else {
+            String::from("on battery · daemon")
+        }
+    } else {
+        String::from("—")
+    };
+    let bat_body = if live.have_frame {
+        if live.low_battery {
+            String::from("low · daemon")
+        } else {
+            String::from("ok · daemon")
+        }
+    } else {
+        String::from("—")
+    };
+    let sig_body = if signature.is_empty() {
+        "(none)".into()
+    } else {
+        signature.join("\n")
+    };
+    let win = if live.have_frame {
+        live.to.as_str()
+    } else {
+        ""
+    };
+    let power_base = if live.have_frame {
+        live.power_base.as_str()
+    } else {
+        ""
+    };
+    let desired = if live.have_frame {
+        live.desired_profile.as_str()
+    } else {
+        ""
+    };
+    let override_active = live.have_frame
+        && !live.desired_profile.is_empty()
+        && power_io::override_profile().as_deref() == Some(live.desired_profile.as_str());
+
+    let lid_g = help_graph::lid_graph(
+        &lid_body,
+        ext,
+        &ext_body,
+        &inh_body,
+        live.have_frame && live.inhibitor,
+        win,
+    );
+    let power_g = help_graph::power_graph(
+        &ac_body,
+        &ext_body,
+        &bat_body,
+        &policy,
+        desired,
+        override_active,
+        power_base,
+    );
+    let display_g = help_graph::display_graph(&sig_body, &match_rows);
+
+    ui.set_help_status_text(if live.have_frame {
+        format!("Daemon frame: {} ({})", live.kind, live.event).into()
+    } else {
+        "Waiting for hyprstate daemon telemetry…".into()
+    });
+    ui.set_help_lid_now(help_graph::lid_now(win, live.have_frame && live.inhibitor).into());
+    ui.set_help_power_now(help_graph::power_now(power_base, desired).into());
+    ui.set_help_display_now(
+        help_graph::display_now(if live.have_frame {
+            live.active_profile.as_str()
+        } else {
+            ""
+        })
+        .into(),
+    );
+
+    ui.set_help_lid_nodes(to_help_nodes(&lid_g.nodes));
+    ui.set_help_lid_muted_edges(to_help_edges(&lid_g.edges, false));
+    ui.set_help_lid_lit_edges(to_help_edges(&lid_g.edges, true));
+    ui.set_help_lid_width(lid_g.width);
+    ui.set_help_lid_height(lid_g.height);
+    ui.set_help_power_nodes(to_help_nodes(&power_g.nodes));
+    ui.set_help_power_muted_edges(to_help_edges(&power_g.edges, false));
+    ui.set_help_power_lit_edges(to_help_edges(&power_g.edges, true));
+    ui.set_help_power_width(power_g.width);
+    ui.set_help_power_height(power_g.height);
+    ui.set_help_display_nodes(to_help_nodes(&display_g.nodes));
+    ui.set_help_display_muted_edges(to_help_edges(&display_g.edges, false));
+    ui.set_help_display_lit_edges(to_help_edges(&display_g.edges, true));
+    ui.set_help_display_width(display_g.width);
+    ui.set_help_display_height(display_g.height);
+}
+
+fn refresh_power(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let picks = state.borrow().sensor_picks.clone();
+    let snap = sample_resolution(&state.borrow());
+    let base = power_base_state(snap.on_ac, snap.ext, snap.low_battery);
+    let mapped = snap.policy.for_base(base);
+    let desired = snap.over.as_deref().unwrap_or_else(|| mapped.as_str());
+
+    ui.set_now_lid(
+        format!(
+            "lid {} ({})",
+            if snap.reading.lid_closed {
+                "closed"
+            } else {
+                "open"
+            },
+            snap.reading.lid_source
+        )
+        .into(),
+    );
+    ui.set_now_ac(match snap.reading.on_ac {
+        Some(true) => format!("AC {} online", snap.reading.ac_source).into(),
+        Some(false) => format!("on battery ({} offline)", snap.reading.ac_source).into(),
+        None => "AC unknown — treated as plugged (desktop default)".into(),
+    });
+    ui.set_now_battery(match snap.reading.battery_pct {
+        Some(pct) => format!("battery {} {pct:.0}%", snap.reading.battery_source).into(),
+        None => format!("no battery ({})", snap.reading.battery_source).into(),
+    });
+    ui.set_now_base(help_graph::base_label(base).into());
+    ui.set_now_desired(desired.into());
+    ui.set_now_applied(snap.applied.clone().into());
+    ui.set_now_override(snap.over.clone().unwrap_or_else(|| "none".into()).into());
+
+    ui.set_lid_sensors(ModelRc::new(VecModel::from(option_labels(
+        &snap.reading.lid_options,
+    ))));
+    ui.set_ac_sensors(ModelRc::new(VecModel::from(option_labels(
+        &snap.reading.ac_options,
+    ))));
+    ui.set_battery_sensors(ModelRc::new(VecModel::from(option_labels(
+        &snap.reading.battery_options,
+    ))));
+    ui.set_lid_sensor_index(sensors::index_of(&snap.reading.lid_options, &picks.lid));
+    ui.set_ac_sensor_index(sensors::index_of(&snap.reading.ac_options, &picks.ac));
+    ui.set_battery_sensor_index(sensors::index_of(
+        &snap.reading.battery_options,
+        &picks.battery,
+    ));
 }
