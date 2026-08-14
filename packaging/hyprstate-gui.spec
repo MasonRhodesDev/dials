@@ -67,7 +67,9 @@ EOF
 %{cargo_license} > LICENSE.dependencies
 
 %install
-%cargo_install
+# %%cargo_install re-resolves without Cargo.lock; git pins then fail offline.
+# %%cargo_build already produced the rpm-profile binary.
+install -Dpm0755 target/rpm/hyprstate-gui %{buildroot}%{_bindir}/hyprstate-gui
 desktop-file-install --dir=%{buildroot}%{_datadir}/applications dist/hyprstate-gui.desktop
 desktop-file-validate %{buildroot}%{_datadir}/applications/hyprstate-gui.desktop
 
