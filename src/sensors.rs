@@ -71,11 +71,10 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn hypr_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("hypr")
+    match hypr_paths::ConfigDirs::from_env() {
+        Ok(dirs) => dirs.config_dir("hypr"),
+        Err(_) => PathBuf::new(),
+    }
 }
 
 pub fn load_picks() -> SensorPicks {

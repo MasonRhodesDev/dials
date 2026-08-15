@@ -9,11 +9,10 @@ pub fn shared_dir() -> PathBuf {
 }
 
 pub fn user_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("hypr/profiles")
+    match hypr_paths::ConfigDirs::from_env() {
+        Ok(dirs) => dirs.config_dir("hypr").join("profiles"),
+        Err(_) => PathBuf::new(),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1820,6 +1820,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 
 [[package]]
+name = "hypr-paths"
+version = "0.1.0"
+source = "git+https://github.com/MasonRhodesDev/hypr-paths?rev=535cec729936310b480c99203c05b5900d2a7e71#535cec729936310b480c99203c05b5900d2a7e71"
+
+[[package]]
 name = "hyprstate-fsm"
 version = "2.0.0"
 source = "git+https://github.com/MasonRhodesDev/hyprstate?rev=38172c2797ac905dfcd04bf5e58b485644d10a2c#38172c2797ac905dfcd04bf5e58b485644d10a2c"
@@ -1832,6 +1837,7 @@ dependencies = [
 name = "hyprstate-gui"
 version = "0.3.0"
 dependencies = [
+ "hypr-paths",
  "hyprstate-fsm",
  "monitor-profiles",
  "serde",

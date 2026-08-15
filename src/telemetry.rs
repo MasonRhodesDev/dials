@@ -74,8 +74,9 @@ impl HelpLive {
 }
 
 pub fn sock_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(|dir| PathBuf::from(dir).join("hyprstate-telemetry.sock"))
+    hypr_paths::BaseDirs::from_env()
+        .ok()
+        .map(|dirs| dirs.runtime_path("hyprstate-telemetry.sock"))
 }
 
 /// Parse one NDJSON line into HelpLive.

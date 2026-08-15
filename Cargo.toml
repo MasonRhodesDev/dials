@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
+hypr-paths = { git = "https://github.com/MasonRhodesDev/hypr-paths", rev = "535cec729936310b480c99203c05b5900d2a7e71" }
 # Git pins (not path) so RPM/PKGBUILD can vendor from a git-archive tarball.
 hyprstate-fsm = { git = "https://github.com/MasonRhodesDev/hyprstate", rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c" }
 slint = { version = "1.17", default-features = false, features = [
