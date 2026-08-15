@@ -455,10 +455,6 @@ pub fn display_graph(signature_body: &str, matches: &[(String, String, String, b
     finish(nodes, edges)
 }
 
-pub fn base_label(base: BaseState) -> &'static str {
-    base.as_str()
-}
-
 fn cascade(
     inputs: &[(&str, &str, &str, bool)],
     input_wires: &[(&str, &str)],

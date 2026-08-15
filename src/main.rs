@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use hyprstate_fsm::power::{PowerPolicy, PowerProfile, power_base_state};
+use hyprstate_fsm::power::{PowerPolicy, PowerProfile};
 use monitor_profiles::{
     ConnectedOutput, Mode, Monitor, Profile, ResolvedOutput, match_in_signature, resolve, select,
 };
@@ -480,6 +480,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             state_poll.borrow_mut().help_live = frame;
             // Always refresh Help models so opening the tab is already current.
             apply_help_from_live(&ui, &state_poll);
+            if ui.get_section() == 1 {
+                refresh_power(&ui, &state_poll);
+            }
         },
     );
     std::mem::forget(telem_timer);
@@ -1641,8 +1644,6 @@ fn run_override(ui: &AppWindow, state: &Rc<RefCell<AppState>>, action: &str) {
 
 struct ResolutionSnap {
     reading: sensors::SensorReading,
-    policy: PowerPolicy,
-    ext: u32,
     on_ac: bool,
     low_battery: bool,
     over: Option<String>,
@@ -1650,20 +1651,28 @@ struct ResolutionSnap {
 }
 
 fn sample_resolution(state: &AppState) -> ResolutionSnap {
-    let live = hyprctl::monitors().unwrap_or_else(|_| state.live.clone());
     let reading = sensors::read(&state.sensor_picks);
-    let (policy, low_pct, _) = power_io::load();
-    let ext = ext_mon_count(&live);
-    let on_ac = reading.on_ac.unwrap_or(true);
-    let low_battery = reading
-        .battery_pct
-        .is_some_and(|pct| pct <= f64::from(low_pct));
+    let frame = &state.help_live;
+    let on_ac = if frame.have_frame {
+        frame.on_ac
+    } else {
+        reading.on_ac.unwrap_or(true)
+    };
+    let low_battery = if frame.have_frame {
+        frame.low_battery
+    } else {
+        false
+    };
     let over = power_io::override_profile();
-    let applied = power_io::applied_profile().unwrap_or_else(|| "unavailable".into());
+    let applied = if frame.have_frame && !frame.applied_profile.is_empty() {
+        frame.applied_profile.clone()
+    } else if frame.have_frame {
+        String::from("unavailable")
+    } else {
+        power_io::applied_profile().unwrap_or_else(|| "unavailable".into())
+    };
     ResolutionSnap {
         reading,
-        policy,
-        ext,
         on_ac,
         low_battery,
         over,
@@ -1815,34 +1824,58 @@ fn apply_help_from_live(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
 
 fn refresh_power(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let picks = state.borrow().sensor_picks.clone();
+    let live = state.borrow().help_live.clone();
     let snap = sample_resolution(&state.borrow());
-    let base = power_base_state(snap.on_ac, snap.ext, snap.low_battery);
-    let mapped = snap.policy.for_base(base);
-    let desired = snap.over.as_deref().unwrap_or_else(|| mapped.as_str());
 
-    ui.set_now_lid(
-        format!(
-            "lid {} ({})",
-            if snap.reading.lid_closed {
-                "closed"
-            } else {
-                "open"
-            },
-            snap.reading.lid_source
-        )
-        .into(),
-    );
-    ui.set_now_ac(match snap.reading.on_ac {
-        Some(true) => format!("AC {} online", snap.reading.ac_source).into(),
-        Some(false) => format!("on battery ({} offline)", snap.reading.ac_source).into(),
-        None => "AC unknown — treated as plugged (desktop default)".into(),
-    });
-    ui.set_now_battery(match snap.reading.battery_pct {
-        Some(pct) => format!("battery {} {pct:.0}%", snap.reading.battery_source).into(),
-        None => format!("no battery ({})", snap.reading.battery_source).into(),
-    });
-    ui.set_now_base(help_graph::base_label(base).into());
-    ui.set_now_desired(desired.into());
+    if live.have_frame {
+        ui.set_now_lid(
+            format!(
+                "lid {} (daemon)",
+                if live.lid_closed {
+                    "closed"
+                } else {
+                    "open"
+                }
+            )
+            .into(),
+        );
+        ui.set_now_ac(if snap.on_ac {
+            "AC plugged (daemon)".into()
+        } else {
+            "on battery (daemon)".into()
+        });
+        ui.set_now_battery(if snap.low_battery {
+            "battery low (daemon)".into()
+        } else {
+            "battery ok (daemon)".into()
+        });
+        ui.set_now_base(live.power_base.clone().into());
+        ui.set_now_desired(live.desired_profile.clone().into());
+    } else {
+        ui.set_now_lid(
+            format!(
+                "lid {} ({})",
+                if snap.reading.lid_closed {
+                    "closed"
+                } else {
+                    "open"
+                },
+                snap.reading.lid_source
+            )
+            .into(),
+        );
+        ui.set_now_ac(match snap.reading.on_ac {
+            Some(true) => format!("AC {} online", snap.reading.ac_source).into(),
+            Some(false) => format!("on battery ({} offline)", snap.reading.ac_source).into(),
+            None => "AC unknown — treated as plugged (desktop default)".into(),
+        });
+        ui.set_now_battery(match snap.reading.battery_pct {
+            Some(pct) => format!("battery {} {pct:.0}%", snap.reading.battery_source).into(),
+            None => format!("no battery ({})", snap.reading.battery_source).into(),
+        });
+        ui.set_now_base("waiting for hyprstate daemon…".into());
+        ui.set_now_desired("—".into());
+    }
     ui.set_now_applied(snap.applied.clone().into());
     ui.set_now_override(snap.over.clone().unwrap_or_else(|| "none".into()).into());
 
