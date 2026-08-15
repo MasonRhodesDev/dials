@@ -1,7 +1,7 @@
-//! Listen for hyprstate daemon telemetry (NDJSON on a Unix socket).
-//! The daemon connects as a client; this module is the server.
+//! Connect to hyprstate daemon telemetry (NDJSON on a Unix socket).
+//! This module is a client: the daemon owns `hyprstate-telemetry.sock`.
 use std::io::{BufRead, BufReader};
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -73,11 +73,9 @@ impl HelpLive {
     }
 }
 
-pub fn sock_path() -> PathBuf {
+pub fn sock_path() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("hyprstate-telemetry.sock")
+        .map(|dir| PathBuf::from(dir).join("hyprstate-telemetry.sock"))
 }
 
 /// Parse one NDJSON line into HelpLive.
@@ -86,46 +84,42 @@ pub fn parse_line(line: &str) -> Option<HelpLive> {
     Some(HelpLive::from_wire(f))
 }
 
-/// Bind the telemetry socket and forward frames on `tx`.
-/// Returns immediately after spawning the listener thread.
+/// Connect to the telemetry socket and forward frames on `tx`.
+/// Returns immediately after spawning the client thread.
+/// Skips if `XDG_RUNTIME_DIR` is unset (no `/tmp` fallback).
 pub fn spawn(tx: mpsc::Sender<HelpLive>) {
+    let Some(path) = sock_path() else {
+        return;
+    };
     thread::Builder::new()
         .name("hyprstate-telem".into())
-        .spawn(move || listen_loop(tx))
-        .expect("spawn telemetry listener");
+        .spawn(move || connect_loop(path, tx))
+        .expect("spawn telemetry client");
 }
 
-fn listen_loop(tx: mpsc::Sender<HelpLive>) {
-    let path = sock_path();
+fn connect_loop(path: PathBuf, tx: mpsc::Sender<HelpLive>) {
     loop {
-        let _ = std::fs::remove_file(&path);
-        let listener = match UnixListener::bind(&path) {
-            Ok(l) => l,
-            Err(_) => {
-                thread::sleep(Duration::from_secs(2));
-                continue;
-            }
-        };
-        let _ = listener.set_nonblocking(false);
-        while let Ok((stream, _)) = listener.accept() {
-            let reader = BufReader::new(stream);
-            for line in reader.lines() {
-                let Ok(line) = line else {
-                    break;
-                };
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let Some(live) = parse_line(&line) else {
-                    continue;
-                };
-                if tx.send(live).is_err() {
-                    return;
+        match UnixStream::connect(&path) {
+            Ok(stream) => {
+                let reader = BufReader::new(stream);
+                for line in reader.lines() {
+                    let Ok(line) = line else {
+                        break;
+                    };
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let Some(live) = parse_line(&line) else {
+                        continue;
+                    };
+                    if tx.send(live).is_err() {
+                        return;
+                    }
                 }
             }
+            Err(_) => {}
         }
-        // Listener died or bind lost — retry.
-        let _ = std::fs::remove_file(&path);
+        // Daemon not up, or the stream ended — retry.
         thread::sleep(Duration::from_millis(500));
     }
 }
@@ -172,6 +166,20 @@ pub fn display_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sock_path_is_runtime_dir_without_tmp_fallback() {
+        match sock_path() {
+            Some(path) => {
+                assert_eq!(
+                    path.file_name().and_then(|n| n.to_str()),
+                    Some("hyprstate-telemetry.sock")
+                );
+                assert!(!path.starts_with("/tmp"));
+            }
+            None => {}
+        }
+    }
 
     #[test]
     fn parse_expanded_frame() {
