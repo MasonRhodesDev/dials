@@ -7,7 +7,7 @@
 # `makepkg --printsrcinfo > .SRCINFO` on every change).
 
 pkgname=hyprstate-gui
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="Displays and power configurator for hyprstate"
 arch=('x86_64')

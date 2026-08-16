@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           hyprstate-gui
-Version:        0.3.0
+Version:        0.3.1
 Release:        1%{?dist}
 Summary:        Displays and power configurator for hyprstate
 License:        MIT
@@ -94,5 +94,8 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hyprstate-gui.desktop
 %{_datadir}/applications/hyprstate-gui.desktop
 
 %changelog
+* Sun Aug 16 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.3.1-1
+- Pin slint-kit to lmtt 0.2.2 and vendor appearance-profiles for COPR.
+
 * Fri Aug 14 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.3.0-1
 - Initial packaged release: binary plus Settings desktop entry
