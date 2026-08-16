@@ -13,3 +13,4 @@ jobs:
     secrets: inherit
     with:
       spec-name: hyprstate-gui
+      copr-project: hyprstate-gui
