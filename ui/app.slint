@@ -156,6 +156,7 @@ export component AppWindow inherits Window {
     callback override-clear();
     callback override-cycle();
     callback section-changed(int);
+    callback telemetry-wake();
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {

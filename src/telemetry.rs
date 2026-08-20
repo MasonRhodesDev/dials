@@ -3,7 +3,6 @@
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -85,20 +84,20 @@ pub fn parse_line(line: &str) -> Option<HelpLive> {
     Some(HelpLive::from_wire(f))
 }
 
-/// Connect to the telemetry socket and forward frames on `tx`.
+/// Connect to the telemetry socket and forward frames to `on_frame`.
 /// Returns immediately after spawning the client thread.
 /// Skips if `XDG_RUNTIME_DIR` is unset (no `/tmp` fallback).
-pub fn spawn(tx: mpsc::Sender<HelpLive>) {
+pub fn spawn(on_frame: impl Fn(HelpLive) -> bool + Send + 'static) {
     let Some(path) = sock_path() else {
         return;
     };
     thread::Builder::new()
         .name("hyprstate-telem".into())
-        .spawn(move || connect_loop(path, tx))
+        .spawn(move || connect_loop(path, on_frame))
         .expect("spawn telemetry client");
 }
 
-fn connect_loop(path: PathBuf, tx: mpsc::Sender<HelpLive>) {
+fn connect_loop(path: PathBuf, on_frame: impl Fn(HelpLive) -> bool) {
     loop {
         match UnixStream::connect(&path) {
             Ok(stream) => {
@@ -113,7 +112,7 @@ fn connect_loop(path: PathBuf, tx: mpsc::Sender<HelpLive>) {
                     let Some(live) = parse_line(&line) else {
                         continue;
                     };
-                    if tx.send(live).is_err() {
+                    if !on_frame(live) {
                         return;
                     }
                 }

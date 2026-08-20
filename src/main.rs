@@ -10,6 +10,10 @@ mod telemetry;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{
+    Arc, Mutex, Weak as SyncWeak,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use hyprstate_fsm::power::{PowerPolicy, PowerProfile};
@@ -50,11 +54,18 @@ struct AppState {
     active_name: Option<String>,
     editor: Option<EditorState>,
     save_wait: Option<Instant>,
+    save_sequence: u64,
     canvas_model: Rc<VecModel<CanvasMonitor>>,
     canvas_w: f32,
     canvas_h: f32,
     sensor_picks: sensors::SensorPicks,
     help_live: telemetry::HelpLive,
+}
+
+#[derive(Default)]
+struct TelemetryWake {
+    latest: Mutex<Option<telemetry::HelpLive>>,
+    pending: AtomicBool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -75,6 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         active_name: None,
         editor: None,
         save_wait: None,
+        save_sequence: 0,
         canvas_model,
         canvas_w: 720.0,
         canvas_h: 520.0,
@@ -118,6 +130,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_save_profile(move || {
             let ui = ui_weak.unwrap();
             save_editor(&ui, &state);
+            if state.borrow().save_wait.is_some() {
+                let sequence = state.borrow().save_sequence;
+                schedule_save_convergence(ui.as_weak(), state.clone(), sequence);
+            }
         });
     }
     {
@@ -413,82 +429,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     refresh_power(&ui, &state);
     apply_help_from_live(&ui, &state);
 
-    // Poll after save for session convergence.
-    let ui_weak = ui.as_weak();
-    let state_poll = state.clone();
-    let timer = slint::Timer::default();
-    timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(500),
-        move || {
-            let Some(ui) = ui_weak.upgrade() else {
+    // Telemetry is edge-triggered: the worker stores only the newest frame and
+    // wakes Slint once. With no frame, input, animation, or one-shot deadline,
+    // winit can block indefinitely.
+    let telem_wake = Arc::new(TelemetryWake::default());
+    {
+        let telem_wake = telem_wake.clone();
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_telemetry_wake(move || {
+            let ui = ui_weak.unwrap();
+            telem_wake.pending.store(false, Ordering::Release);
+            let Some(frame) = telem_wake.latest.lock().expect("telemetry slot").take() else {
                 return;
             };
-            let mut st = state_poll.borrow_mut();
-            let Some(started) = st.save_wait else {
-                return;
-            };
-            if started.elapsed() > Duration::from_secs(8) {
-                st.save_wait = None;
-                ui.set_status_text("Saved; session hasn’t picked it up yet.".into());
-                return;
-            }
-            if session_matches_editor(&st) {
-                st.save_wait = None;
-                ui.set_status_text("Session updated.".into());
-            }
-        },
-    );
-    std::mem::forget(timer);
-
-    let ui_weak = ui.as_weak();
-    let state_poll = state.clone();
-    let power_timer = slint::Timer::default();
-    power_timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_secs(1),
-        move || {
-            let Some(ui) = ui_weak.upgrade() else {
-                return;
-            };
+            state.borrow_mut().help_live = frame;
+            apply_help_from_live(&ui, &state);
             if ui.get_section() == 1 {
-                refresh_power(&ui, &state_poll);
+                refresh_power(&ui, &state);
             }
-        },
-    );
-    std::mem::forget(power_timer);
-
-    let (telem_tx, telem_rx) = std::sync::mpsc::channel::<telemetry::HelpLive>();
-    telemetry::spawn(telem_tx);
+        });
+    }
+    let telem_weak = Arc::downgrade(&telem_wake);
     let ui_weak = ui.as_weak();
-    let state_poll = state.clone();
-    let telem_timer = slint::Timer::default();
-    telem_timer.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(50),
-        move || {
-            let Some(ui) = ui_weak.upgrade() else {
-                return;
-            };
-            let mut latest = None;
-            while let Ok(frame) = telem_rx.try_recv() {
-                latest = Some(frame);
-            }
-            let Some(frame) = latest else {
-                return;
-            };
-            state_poll.borrow_mut().help_live = frame;
-            // Always refresh Help models so opening the tab is already current.
-            apply_help_from_live(&ui, &state_poll);
-            if ui.get_section() == 1 {
-                refresh_power(&ui, &state_poll);
-            }
-        },
-    );
-    std::mem::forget(telem_timer);
+    telemetry::spawn(move |frame| queue_telemetry_frame(&telem_weak, &ui_weak, frame));
 
     ui.run()?;
     Ok(())
+}
+
+fn queue_telemetry_frame(
+    slot: &SyncWeak<TelemetryWake>,
+    ui: &slint::Weak<AppWindow>,
+    frame: telemetry::HelpLive,
+) -> bool {
+    let Some(slot) = slot.upgrade() else {
+        return false;
+    };
+    *slot.latest.lock().expect("telemetry slot") = Some(frame);
+    if !slot.pending.swap(true, Ordering::AcqRel) {
+        let slot_for_error = slot.clone();
+        if ui
+            .upgrade_in_event_loop(move |ui| ui.invoke_telemetry_wake())
+            .is_err()
+        {
+            slot_for_error.pending.store(false, Ordering::Release);
+            return false;
+        }
+    }
+    true
+}
+
+fn schedule_save_convergence(
+    ui: slint::Weak<AppWindow>,
+    state: Rc<RefCell<AppState>>,
+    sequence: u64,
+) {
+    slint::Timer::single_shot(Duration::from_millis(500), move || {
+        let Some(ui_handle) = ui.upgrade() else {
+            return;
+        };
+        let mut st = state.borrow_mut();
+        if st.save_sequence != sequence {
+            return;
+        }
+        let Some(started) = st.save_wait else {
+            return;
+        };
+        if started.elapsed() > Duration::from_secs(8) {
+            st.save_wait = None;
+            ui_handle.set_status_text("Saved; session hasn’t picked it up yet.".into());
+            return;
+        }
+        if session_matches_editor(&st) {
+            st.save_wait = None;
+            ui_handle.set_status_text("Session updated.".into());
+            return;
+        }
+        drop(st);
+        schedule_save_convergence(ui, state, sequence);
+    });
 }
 
 fn refresh_list(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
@@ -1359,7 +1379,11 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             ui.set_editor_dirty(false);
             ui.set_editor_name(profile.name.clone().into());
             ui.set_status_text("Waiting for session…".into());
-            state.borrow_mut().save_wait = Some(Instant::now());
+            {
+                let mut st = state.borrow_mut();
+                st.save_wait = Some(Instant::now());
+                st.save_sequence = st.save_sequence.wrapping_add(1);
+            }
             if let Some(ed) = state.borrow_mut().editor.as_mut() {
                 ed.listed.profile = profile;
                 ed.listed.path = path.clone();
@@ -1894,4 +1918,16 @@ fn refresh_power(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         &snap.reading.battery_options,
         &picks.battery,
     ));
+}
+
+#[cfg(test)]
+mod idle_tests {
+    #[test]
+    fn native_event_loop_has_no_periodic_pollers() {
+        let repeated_timer = ["TimerMode", "::Repeated"].concat();
+        assert!(
+            !include_str!("main.rs").contains(&repeated_timer),
+            "periodic Slint timers prevent indefinite idle sleep"
+        );
+    }
 }

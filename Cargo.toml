@@ -12,7 +12,7 @@ monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles",
 hypr-paths = "0.1.0"
 # Git pins (not path) so RPM/PKGBUILD can vendor from a git-archive tarball.
 hyprstate-fsm = { git = "https://github.com/MasonRhodesDev/hyprstate", rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c" }
-slint = { version = "1.17", default-features = false, features = [
+slint = { version = "=1.17.1", default-features = false, features = [
     "std",
     "backend-winit",
     "renderer-skia",
@@ -24,5 +24,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "=1.17.1"
 slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
