@@ -1099,6 +1099,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dials"
+version = "0.4.0"
+dependencies = [
+ "hyprstate-fsm",
+ "monitor-profiles",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "slint-kit",
+ "xdg-paths",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1910,20 +1924,6 @@ source = "git+https://github.com/MasonRhodesDev/hyprstate?rev=38172c2797ac905dfc
 dependencies = [
  "monitor-profiles",
  "serde",
-]
-
-[[package]]
-name = "hyprstate-gui"
-version = "0.3.3"
-dependencies = [
- "hypr-paths",
- "hyprstate-fsm",
- "monitor-profiles",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "slint-kit",
 ]
 
 [[package]]
@@ -6294,6 +6294,12 @@ dependencies = [
  "libc",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "xdg-paths"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86bfd0671d6ceb9f3d5049ceaa7ec29b00d36cf26aceae18e4c9f553d7da780a"
 
 [[package]]
 name = "xkbcommon"
