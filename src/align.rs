@@ -72,7 +72,10 @@ impl AlignOp {
 
     pub fn guides(self, neighbor: Rect) -> Vec<Guide> {
         match self {
-            Self::Left => vec![Guide::Vertical(neighbor.x), Guide::Horizontal(neighbor.cy())],
+            Self::Left => vec![
+                Guide::Vertical(neighbor.x),
+                Guide::Horizontal(neighbor.cy()),
+            ],
             Self::Right => {
                 vec![
                     Guide::Vertical(neighbor.right()),

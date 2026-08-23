@@ -146,10 +146,7 @@ pub fn map_y(view: &CanvasView, logical: i32) -> f32 {
 }
 
 /// Map logical layout with an explicit view (fit or user zoom/pan).
-pub fn layout_drawn(
-    outputs: &[(ResolvedOutput, String, bool)],
-    view: CanvasView,
-) -> Vec<Drawn> {
+pub fn layout_drawn(outputs: &[(ResolvedOutput, String, bool)], view: CanvasView) -> Vec<Drawn> {
     outputs
         .iter()
         .enumerate()
@@ -179,13 +176,7 @@ mod tests {
     use super::*;
     use monitor_profiles::{Mode, ResolvedOutput};
 
-    fn mon(
-        w: u32,
-        h: u32,
-        scale: f64,
-        transform: u8,
-        pos: (i32, i32),
-    ) -> ResolvedOutput {
+    fn mon(w: u32, h: u32, scale: f64, transform: u8, pos: (i32, i32)) -> ResolvedOutput {
         ResolvedOutput {
             name: String::new(),
             selector: String::new(),
@@ -236,7 +227,12 @@ mod tests {
         let drawn = layout_drawn(&outs, view);
         let a = &drawn[0];
         // Fills the wider axis within padding (16px each side).
-        assert!((a.w - (cw - 32.0)).abs() < 1.0, "w={} expected ~{}", a.w, cw - 32.0);
+        assert!(
+            (a.w - (cw - 32.0)).abs() < 1.0,
+            "w={} expected ~{}",
+            a.w,
+            cw - 32.0
+        );
         let cx = a.x + a.w * 0.5;
         let cy = a.y + a.h * 0.5;
         assert!((cx - cw * 0.5).abs() < 1.0, "cx={cx}");

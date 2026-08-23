@@ -218,15 +218,39 @@ fn section_from_categories(categories: &[&str]) -> &'static str {
 }
 
 /// Command prefix that runs a terminal program, or `None` when no host exists.
+/// Order: the freedesktop `xdg-terminal-exec` (not in every distro's repos),
+/// the user's `$TERMINAL`, then common Wayland terminals with their
+/// "run this command" form. Extend the list, do not guess flags.
 fn terminal_host() -> Option<Vec<String>> {
     if on_path("xdg-terminal-exec") {
         return Some(vec!["xdg-terminal-exec".into()]);
     }
-    let term = std::env::var("TERMINAL").ok().filter(|t| !t.is_empty())?;
-    let argv = exec_argv(&term);
-    let exe = argv.first()?;
-    on_path(exe).then_some(argv)
+    if let Some(term) = std::env::var("TERMINAL").ok().filter(|t| !t.is_empty()) {
+        let argv = exec_argv(&term);
+        if let Some(exe) = argv.first()
+            && on_path(exe)
+        {
+            return Some(argv);
+        }
+    }
+    KNOWN_TERMINALS
+        .iter()
+        .find(|(exe, _)| on_path(exe))
+        .map(|(exe, args)| {
+            std::iter::once(exe.to_string())
+                .chain(args.iter().map(|a| a.to_string()))
+                .collect()
+        })
 }
+
+/// Terminal binary and the arguments that make it run a trailing command.
+const KNOWN_TERMINALS: &[(&str, &[&str])] = &[
+    ("kitty", &[]),
+    ("foot", &[]),
+    ("alacritty", &["-e"]),
+    ("wezterm", &["start", "--"]),
+    ("ghostty", &["-e"]),
+];
 
 /// Absolute path, or found in `$PATH`.
 fn on_path(exe: &str) -> bool {
@@ -360,6 +384,25 @@ mod tests {
             assert_eq!(e.unwrap().argv[0], "xdg-terminal-exec");
         } else {
             assert_eq!(e.unwrap().argv, vec!["true", "-e", "lmtt-config"]);
+        }
+    }
+
+    #[test]
+    fn known_terminal_fallback_when_no_terminal_env() {
+        // SAFETY: tests in this module run single-threaded for this var.
+        unsafe { std::env::remove_var("TERMINAL") };
+        let host = terminal_host();
+        let any_known = KNOWN_TERMINALS.iter().any(|(exe, _)| on_path(exe));
+        if on_path("xdg-terminal-exec") {
+            assert_eq!(host.unwrap()[0], "xdg-terminal-exec");
+        } else if any_known {
+            let host = host.unwrap();
+            assert!(
+                KNOWN_TERMINALS.iter().any(|(exe, _)| *exe == host[0]),
+                "{host:?}"
+            );
+        } else {
+            assert!(host.is_none());
         }
     }
 

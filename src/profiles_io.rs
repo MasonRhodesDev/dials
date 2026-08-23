@@ -82,10 +82,7 @@ pub fn write_atomic(path: &Path, profile: &Profile) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let content = to_toml(profile);
-    let tmp = path.with_extension(format!(
-        "toml.tmp-{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("toml.tmp-{}", std::process::id()));
     fs::write(&tmp, &content).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())

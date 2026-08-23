@@ -36,8 +36,9 @@ entry when either holds:
 `NoDisplay`, `Hidden`, `OnlyShowIn` / `NotShowIn` (against
 `$XDG_CURRENT_DESKTOP`) and a missing `TryExec` all hide an entry. `Exec`
 field codes are dropped; tools are launched in their own process group.
-`Terminal=true` entries run under `xdg-terminal-exec`, else `$TERMINAL`;
-with neither they are hidden. `dials --entries` prints what More would list.
+`Terminal=true` entries run under `xdg-terminal-exec`, else `$TERMINAL`,
+else the first of kitty / foot / alacritty / wezterm / ghostty on `PATH`;
+with none of those they are hidden. `dials --entries` prints what More would list.
 
 ```ini
 [Desktop Entry]

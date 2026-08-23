@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.2
+Version:        0.4.3
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
@@ -95,6 +95,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Sat Aug 22 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.3-1
+- Terminal=true entries fall back to kitty/foot/alacritty/wezterm/ghostty when xdg-terminal-exec and $TERMINAL are absent.
+
 * Sat Aug 22 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.2-1
 - COPR: enable network for the skia-bindings binary download (as hyprstate-gui had).
 

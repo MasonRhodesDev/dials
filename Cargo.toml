@@ -1,6 +1,6 @@
 [package]
 name = "dials"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 license = "MIT"
 description = "Desktop settings for Wayland sessions: displays, power, and a hub for other settings tools"
