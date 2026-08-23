@@ -15,8 +15,8 @@
 #   submit a --head build); --copr does a manual COPR submit.
 set -euo pipefail
 
-NAME="hyprstate-gui"
-CRATE="hyprstate-gui"
+NAME="dials"
+CRATE="dials"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SPEC="$REPO/packaging/$NAME.spec"

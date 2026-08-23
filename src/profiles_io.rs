@@ -9,7 +9,7 @@ pub fn shared_dir() -> PathBuf {
 }
 
 pub fn user_dir() -> PathBuf {
-    match hypr_paths::ConfigDirs::from_env() {
+    match xdg_paths::ConfigDirs::from_env() {
         Ok(dirs) => dirs.config_dir("hypr").join("profiles"),
         Err(_) => PathBuf::new(),
     }

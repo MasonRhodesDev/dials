@@ -1,15 +1,15 @@
 [package]
-name = "hyprstate-gui"
-version = "0.3.3"
+name = "dials"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
-description = "Displays configurator for hyprstate — edit shared monitor-profiles TOML"
-repository = "https://github.com/MasonRhodesDev/hyprstate-gui"
+description = "Desktop settings for Wayland sessions: displays, power, and a hub for other settings tools"
+repository = "https://github.com/MasonRhodesDev/dials"
 publish = false
 
 [dependencies]
 monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
-hypr-paths = "0.1.0"
+xdg-paths = "0.2.0"
 # Git pins (not path) so RPM/PKGBUILD can vendor from a git-archive tarball.
 hyprstate-fsm = { git = "https://github.com/MasonRhodesDev/hyprstate", rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c" }
 slint = { version = "=1.17.1", default-features = false, features = [

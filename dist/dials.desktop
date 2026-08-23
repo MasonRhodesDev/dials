@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Dials
+GenericName=Settings
+Comment=Displays, power, and other desktop settings
+Exec=dials
+TryExec=dials
+Icon=preferences-system
+Terminal=false
+Categories=Settings;
+Keywords=settings;preferences;monitor;display;power;
+StartupNotify=true
+StartupWMClass=dials

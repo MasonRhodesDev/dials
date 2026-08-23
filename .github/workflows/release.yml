@@ -12,5 +12,5 @@ jobs:
     uses: MasonRhodesDev/packaging-workflows/.github/workflows/release.yml@v1
     secrets: inherit
     with:
-      spec-name: hyprstate-gui
-      copr-project: hyprstate-gui
+      spec-name: dials
+      copr-project: dials

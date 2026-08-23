@@ -1,6 +1,9 @@
-//! hyprstate-gui — Displays configurator (MVP).
+//! dials — desktop settings. Displays and power pages edit hyprstate
+//! intent; the More page launches other settings tools from their XDG
+//! desktop entries (see `entries`).
 mod align;
 mod canvas;
+mod entries;
 mod help_graph;
 mod hyprctl;
 mod power_io;
@@ -60,6 +63,8 @@ struct AppState {
     canvas_h: f32,
     sensor_picks: sensors::SensorPicks,
     help_live: telemetry::HelpLive,
+    /// External settings tools (More page), in display order.
+    entries: Vec<entries::Entry>,
 }
 
 #[derive(Default)]
@@ -69,6 +74,18 @@ struct TelemetryWake {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("--entries") => return print_entries(),
+        Some("--help" | "-h") => {
+            println!(
+                "usage: dials [--entries]\n  --entries  list the settings tools the More page would show, then exit"
+            );
+            return Ok(());
+        }
+        Some(other) => return Err(format!("unknown argument {other}; see --help").into()),
+    }
     let ui = AppWindow::new()?;
     let bridge = ThemeBridge::attach(ui.as_weak(), |ui, tokens| {
         apply_theme!(ui.global::<Theme>(), tokens);
@@ -92,6 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         canvas_h: 520.0,
         sensor_picks: sensors::load_picks(),
         help_live: telemetry::HelpLive::default(),
+        entries: Vec::new(),
     }));
 
     refresh_list(&ui, &state);
@@ -422,8 +440,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if section == 2 {
                 apply_help_from_live(&ui, &state);
             }
+            if section == 3 {
+                refresh_entries(&ui, &state);
+            }
         });
     }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_launch_entry(move |idx| {
+            let ui = ui_weak.unwrap();
+            let result = state
+                .borrow()
+                .entries
+                .get(idx as usize)
+                .map(entries::launch)
+                .unwrap_or(Err("no such entry".into()));
+            match result {
+                Ok(()) => ui.set_status_text("".into()),
+                Err(e) => ui.set_status_text(format!("Could not launch {e}").into()),
+            }
+        });
+    }
+    refresh_entries(&ui, &state);
 
     load_policy_ui(&ui);
     refresh_power(&ui, &state);
@@ -1855,11 +1894,7 @@ fn refresh_power(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         ui.set_now_lid(
             format!(
                 "lid {} (daemon)",
-                if live.lid_closed {
-                    "closed"
-                } else {
-                    "open"
-                }
+                if live.lid_closed { "closed" } else { "open" }
             )
             .into(),
         );
@@ -1918,6 +1953,47 @@ fn refresh_power(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         &snap.reading.battery_options,
         &picks.battery,
     ));
+}
+
+/// Same scan the More page runs, from the environment.
+fn scan_entries() -> Result<Vec<entries::Entry>, xdg_paths::Error> {
+    let dirs = xdg_paths::ConfigDirs::from_env()?;
+    let xdg = std::env::var("XDG_DATA_DIRS").ok();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    Ok(entries::scan(
+        &entries::data_dirs(dirs.data_home(), xdg.as_deref()),
+        &entries::current_desktop(desktop.as_deref()),
+    ))
+}
+
+/// `dials --entries`: what More would list, one per line.
+fn print_entries() -> Result<(), Box<dyn std::error::Error>> {
+    for e in scan_entries()? {
+        println!("{}\t{}\t{}\t{}", e.section, e.id, e.name, e.argv.join(" "));
+    }
+    Ok(())
+}
+
+/// Rescan XDG desktop entries for the More page. Missing XDG dirs are an
+/// empty list, not an error: the page just says so.
+fn refresh_entries(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let found = match scan_entries() {
+        Ok(found) => found,
+        Err(e) => {
+            ui.set_status_text(format!("XDG paths: {e}").into());
+            Vec::new()
+        }
+    };
+    let rows: Vec<SettingsEntry> = found
+        .iter()
+        .map(|e| SettingsEntry {
+            name: e.name.clone().into(),
+            comment: e.comment.clone().into(),
+            section: e.section.clone().into(),
+        })
+        .collect();
+    ui.set_entries(ModelRc::from(Rc::new(VecModel::from(rows))));
+    state.borrow_mut().entries = found;
 }
 
 #[cfg(test)]

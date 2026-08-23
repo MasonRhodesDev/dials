@@ -67,11 +67,11 @@ pub struct SensorReading {
 }
 
 pub fn config_path() -> PathBuf {
-    hypr_dir().join("hyprstate-gui.json")
+    hypr_dir().join("dials.json")
 }
 
 pub fn hypr_dir() -> PathBuf {
-    match hypr_paths::ConfigDirs::from_env() {
+    match xdg_paths::ConfigDirs::from_env() {
         Ok(dirs) => dirs.config_dir("hypr"),
         Err(_) => PathBuf::new(),
     }

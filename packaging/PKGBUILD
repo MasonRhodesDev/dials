@@ -1,22 +1,22 @@
 # Maintainer: Mason Rhodes <mrhodesdev@gmail.com>
 #
-# Arch package for hyprstate-gui. Same payload as the Fedora RPM
-# (packaging/hyprstate-gui.spec); all paths are identical across both distros.
+# Arch package for dials. Same payload as the Fedora RPM
+# (packaging/dials.spec); all paths are identical across both distros.
 # Usable directly with makepkg from this directory after a release tag is
 # pushed, or published to the AUR (regenerate .SRCINFO with
 # `makepkg --printsrcinfo > .SRCINFO` on every change).
 
-pkgname=hyprstate-gui
-pkgver=0.3.3
+pkgname=dials
+pkgver=0.4.0
 pkgrel=1
-pkgdesc="Displays and power configurator for hyprstate"
+pkgdesc="Desktop settings: displays, power, and a hub for other settings tools"
 arch=('x86_64')
-url="https://github.com/MasonRhodesDev/hyprstate-gui"
+url="https://github.com/MasonRhodesDev/dials"
 license=('MIT')
 depends=('gcc-libs' 'libxkbcommon' 'mesa' 'fontconfig' 'wayland')
 makedepends=('cargo' 'git' 'clang' 'python' 'ninja' 'cmake' 'pkgconf' 'fontconfig')
 checkdepends=('desktop-file-utils')
-optdepends=('hyprstate: session apply and power overrides')
+optdepends=('hyprstate: display profile apply and power overrides')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('3cafd93bcd497c8a16a947dd82de22a5c5eac76c799eafd5408ef4fd0a261f6a')
 
@@ -35,7 +35,7 @@ build() {
 
 check() {
   cd "$pkgname-$pkgver"
-  desktop-file-validate dist/hyprstate-gui.desktop
+  desktop-file-validate dist/dials.desktop
   export RUSTUP_TOOLCHAIN=stable
   cargo test --frozen --release
 }
@@ -43,7 +43,7 @@ check() {
 package() {
   cd "$pkgname-$pkgver"
   install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
-  install -Dm644 dist/hyprstate-gui.desktop "$pkgdir/usr/share/applications/hyprstate-gui.desktop"
+  install -Dm644 dist/dials.desktop "$pkgdir/usr/share/applications/dials.desktop"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

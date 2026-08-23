@@ -1,14 +1,14 @@
-# RPM spec for hyprstate-gui. Built in COPR from a local SRPM produced by
+# RPM spec for dials. Built in COPR from a local SRPM produced by
 # packaging/build-srpm.sh (source tarball from the git tag + vendored cargo
 # deps as Source1 — no rust-*-devel packages needed).
 %bcond_without check
 
-Name:           hyprstate-gui
-Version:        0.3.3
+Name:           dials
+Version:        0.4.0
 Release:        1%{?dist}
-Summary:        Displays and power configurator for hyprstate
+Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
-URL:            https://github.com/MasonRhodesDev/hyprstate-gui
+URL:            https://github.com/MasonRhodesDev/dials
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:        %{name}-%{version}-vendor.tar.xz
 
@@ -31,10 +31,11 @@ Requires:       fontconfig
 Recommends:     hyprstate
 
 %description
-Slint configurator for hyprstate: edit monitor-profile layouts, the power
-policy map, and inspect how lid/power/profile state is derived. A desktop
-entry lands in the Settings category. Configuration lives in ~/.config/hypr
-and is not part of this package.
+Slint desktop settings application. Displays and Power edit hyprstate's
+monitor-profile layouts and power policy map and show how lid/power/profile
+state is derived; More lists every other installed settings tool from its
+XDG desktop entry (Categories=Settings; or X-Dials-Section=) and launches
+it. Configuration lives in ~/.config/hypr and is not part of this package.
 
 %prep
 # -a1 unpacks the vendor tarball (vendor/ at its root) into the source dir.
@@ -78,9 +79,9 @@ EOF
 %install
 # %%cargo_install re-resolves without Cargo.lock; git pins then fail offline.
 # %%cargo_build already produced the rpm-profile binary.
-install -Dpm0755 target/rpm/hyprstate-gui %{buildroot}%{_bindir}/hyprstate-gui
-desktop-file-install --dir=%{buildroot}%{_datadir}/applications dist/hyprstate-gui.desktop
-desktop-file-validate %{buildroot}%{_datadir}/applications/hyprstate-gui.desktop
+install -Dpm0755 target/rpm/dials %{buildroot}%{_bindir}/dials
+desktop-file-install --dir=%{buildroot}%{_datadir}/applications dist/dials.desktop
+desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 
 %if %{with check}
 %check
@@ -90,10 +91,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/hyprstate-gui.desktop
 %files
 %license LICENSE LICENSE.dependencies
 %doc README.md
-%{_bindir}/hyprstate-gui
-%{_datadir}/applications/hyprstate-gui.desktop
+%{_bindir}/dials
+%{_datadir}/applications/dials.desktop
 
 %changelog
+* Sat Aug 22 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.0-1
+- Rename from hyprstate-gui; add the More page (XDG Settings entries).
+
 * Thu Aug 20 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.3.3-1
 - Use event-driven telemetry and bounded one-shot save convergence checks.
 - Pin Slint and slint-build to 1.17.1.

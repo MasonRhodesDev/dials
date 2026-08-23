@@ -73,7 +73,7 @@ impl HelpLive {
 }
 
 pub fn sock_path() -> Option<PathBuf> {
-    hypr_paths::BaseDirs::from_env()
+    xdg_paths::BaseDirs::from_env()
         .ok()
         .map(|dirs| dirs.runtime_path("hyprstate-telemetry.sock"))
 }

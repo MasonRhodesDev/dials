@@ -1,4 +1,5 @@
-// hyprstate → Displays (MVP). Canvas-first monitor profile editor.
+// dials — desktop settings. Displays (canvas-first monitor profile editor),
+// Power, Help, and More (external settings tools from XDG desktop entries).
 // UX: monitor-profiles/.plans/planning/ux_design.md
 
 import { Theme } from "theme.slint";
@@ -14,6 +15,13 @@ import { PowerPage } from "power.slint";
 import { HelpPage, HelpNode, HelpEdge } from "help.slint";
 
 export { Theme, Palette, HelpNode, HelpEdge }
+
+/// One external settings tool (More page). `section` groups rows.
+export struct SettingsEntry {
+    name: string,
+    comment: string,
+    section: string,
+}
 
 export struct ProfileRow {
     name: string,
@@ -40,7 +48,7 @@ export struct CanvasGuide {
 }
 
 export component AppWindow inherits Window {
-    title: "hyprstate";
+    title: "Dials";
     preferred-width: 1100px;
     preferred-height: 720px;
     background: Theme.page-bg;
@@ -84,6 +92,7 @@ export component AppWindow inherits Window {
     in-out property <string> canvas-zoom-label: "100%";
 
     in-out property <int> section: 0;
+    in-out property <[SettingsEntry]> entries: [];
     in-out property <string> now-lid: "";
     in-out property <string> now-ac: "";
     in-out property <string> now-battery: "";
@@ -157,6 +166,7 @@ export component AppWindow inherits Window {
     callback override-cycle();
     callback section-changed(int);
     callback telemetry-wake();
+    callback launch-entry(int);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -193,6 +203,14 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.section = 2;
                         root.section-changed(2);
+                    }
+                }
+                KitButton {
+                    text: "More";
+                    primary: root.section == 3;
+                    clicked => {
+                        root.section = 3;
+                        root.section-changed(3);
                     }
                 }
                 KitSpacer { axis: "horizontal"; }
@@ -653,6 +671,47 @@ export component AppWindow inherits Window {
                 display-lit-edges: root.help-display-lit-edges;
                 display-width: root.help-display-width;
                 display-height: root.help-display-height;
+            }
+        }
+
+    if root.section == 3: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            VerticalBox {
+                padding: 0;
+                spacing: Theme.space-lg;
+                alignment: start;
+
+                KitDisplay { text: "More settings"; }
+                KitMuted {
+                    text: "Other settings tools installed on this system. Each opens in its own window.";
+                    wrap-text: true;
+                }
+                if root.entries.length == 0: KitMuted {
+                    text: "No settings tools found. A tool is listed when its desktop entry has Categories=Settings; or X-Dials-Section=<section>.";
+                    wrap-text: true;
+                }
+
+                KitVStack {
+                    gap: "tight";
+                    width: 100%;
+                    for e[i] in root.entries: VerticalLayout {
+                        spacing: Theme.space-sm;
+                        // Section heading when it differs from the previous row.
+                        if i == 0 || root.entries[i - 1].section != e.section: KitTitle {
+                            text: e.section;
+                        }
+                        KitListRow {
+                            title: e.name;
+                            meta: e.comment;
+                            clicked => { root.launch-entry(i); }
+                        }
+                    }
+                }
+
+                KitMuted { text: root.status-text; }
             }
         }
             }
