@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.3
+Version:        0.4.4
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
@@ -95,6 +95,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Fri Aug 28 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.4-1
+- Profile editor shows newly plugged monitors (seeded from live layout) and marks them unsaved until the profile is saved.
+
 * Sat Aug 22 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.3-1
 - Terminal=true entries fall back to kitty/foot/alacritty/wezterm/ghostty when xdg-terminal-exec and $TERMINAL are absent.
 
