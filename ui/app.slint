@@ -39,6 +39,8 @@ export struct CanvasMonitor {
     selected: bool,
     ghost: bool,
     origin: bool,
+    /// Live output the loaded profile has no entry for (kept only on save).
+    unsaved: bool,
 }
 
 /// Active snap guide (only present while snapped). `vertical` → line at x=`pos`.
@@ -84,6 +86,7 @@ export component AppWindow inherits Window {
     in-out property <string> insp-pos-y: "0";
     in-out property <bool> insp-enabled: true;
     in-out property <bool> insp-is-origin: false;
+    in-out property <bool> insp-unsaved: false;
     in-out property <bool> show-advanced: false;
     in-out property <bool> helper-snap-edges: true;
     in-out property <bool> helper-snap-centers: true;
@@ -414,10 +417,12 @@ export component AppWindow inherits Window {
                         ? Theme.tile-bg.with-alpha(Theme.ghost-alpha)
                         : (m.selected ? Theme.tile-selected : Theme.tile-bg);
                     border-width: m.selected ? Theme.border-width-strong : Theme.border-width;
-                    border-color: m.selected ? Theme.accent : Theme.border;
+                    border-color: m.unsaved
+                        ? Theme.warning-fg
+                        : (m.selected ? Theme.accent : Theme.border);
 
                     Text {
-                        text: m.label + (m.origin ? " ★" : "");
+                        text: m.label + (m.origin ? " ★" : "") + (m.unsaved ? "\nnot saved" : "");
                         color: Theme.fg;
                         font-size: Theme.font-label;
                         horizontal-alignment: center;
@@ -509,6 +514,11 @@ export component AppWindow inherits Window {
 
                         KitTitle {
                             text: root.insp-label == "" ? "Select a monitor" : root.insp-label;
+                        }
+                        if root.insp-unsaved: KitLabel {
+                            text: "Not in this profile yet — save to keep it.";
+                            color: Theme.warning-fg;
+                            wrap: word-wrap;
                         }
 
                         KitField {

@@ -47,6 +47,9 @@ struct EditorState {
     pan_last: Option<(f32, f32)>,
     /// Logical snap guides (mapped to canvas in `push_canvas`).
     active_guides: Vec<align::Guide>,
+    /// Parallel to `profile.monitors`: live outputs the loaded profile had no
+    /// entry for. Appended on open so they can be placed; cleared on save.
+    unsaved: Vec<bool>,
 }
 
 struct AppState {
@@ -691,34 +694,48 @@ fn sanitize_profile_name(raw: &str) -> String {
     out
 }
 
+/// Profile entry mirroring a live output's current mode/scale/position.
+fn monitor_from_live(h: &hyprctl::HyprMonitor) -> Monitor {
+    let output = if h.description.is_empty() {
+        h.name.clone()
+    } else {
+        let desc = strip_serial_suffix(&h.description);
+        format!("desc:{desc}")
+    };
+    Monitor {
+        output,
+        mode: Some(Mode {
+            width: h.width,
+            height: h.height,
+            refresh: h.refresh_rate.round(),
+        }),
+        scale: h.scale,
+        position: Some((h.x, h.y)),
+        transform: h.transform % 4,
+        enabled: true,
+    }
+}
+
+/// Live outputs no entry in `profile` selects — newly plugged monitors the
+/// saved profile doesn't know about yet.
+fn live_missing_from_profile<'a>(
+    profile: &Profile,
+    live: &'a [hyprctl::HyprMonitor],
+    connected: &[ConnectedOutput],
+) -> Vec<&'a hyprctl::HyprMonitor> {
+    live.iter()
+        .zip(connected.iter())
+        .filter(|(_, c)| !profile.monitors.iter().any(|m| selects(&m.output, c)))
+        .map(|(h, _)| h)
+        .collect()
+}
+
 fn seed_profile_from_live(
     live: &[hyprctl::HyprMonitor],
     name: &str,
 ) -> (Profile, std::path::PathBuf, profiles_io::Source) {
-    let mut monitors = Vec::new();
-    let mut matches = Vec::new();
-    for h in live {
-        let selector = if h.description.is_empty() {
-            h.name.clone()
-        } else {
-            let desc = strip_serial_suffix(&h.description);
-            format!("desc:{desc}")
-        };
-        matches.push(selector.clone());
-        let mode = Mode {
-            width: h.width,
-            height: h.height,
-            refresh: h.refresh_rate.round(),
-        };
-        monitors.push(Monitor {
-            output: selector,
-            mode: Some(mode),
-            scale: h.scale,
-            position: Some((h.x, h.y)),
-            transform: h.transform % 4,
-            enabled: true,
-        });
-    }
+    let monitors: Vec<Monitor> = live.iter().map(monitor_from_live).collect();
+    let matches = monitors.iter().map(|m| m.output.clone()).collect();
     let profile = Profile {
         name: name.to_string(),
         description: "Current desk (seeded from live Hyprland layout).".into(),
@@ -743,7 +760,7 @@ fn open_listed(
 ) {
     let mut st = state.borrow_mut();
     let resolved = resolve(&listed.profile, &st.connected);
-    let positions: Vec<(i32, i32)> = listed
+    let mut positions: Vec<(i32, i32)> = listed
         .profile
         .monitors
         .iter()
@@ -754,12 +771,26 @@ fn open_listed(
                 .unwrap_or((0, 0))
         })
         .collect();
+    let mut profile = listed.profile.clone();
+    let mut unsaved = vec![false; profile.monitors.len()];
+    let added: Vec<Monitor> = live_missing_from_profile(&profile, &st.live, &st.connected)
+        .into_iter()
+        .map(monitor_from_live)
+        .collect();
+    for m in added {
+        positions.push(m.position.unwrap_or((0, 0)));
+        unsaved.push(true);
+        profile.monitors.push(m);
+    }
+    let added_count = unsaved.iter().filter(|u| **u).count();
+    let dirty = dirty || added_count > 0;
 
     st.editor = Some(EditorState {
         listed: listed.clone(),
-        profile: listed.profile.clone(),
+        profile,
         selected: 0,
         positions,
+        unsaved,
         drag_origin: None,
         drag_press_px: None,
         view: canvas::CanvasView::default(),
@@ -780,7 +811,14 @@ fn open_listed(
     ui.set_can_promote_shared(
         listed.source == profiles_io::Source::User && profiles_io::shared_writable(),
     );
-    ui.set_status_text("".into());
+    ui.set_status_text(
+        match added_count {
+            0 => String::new(),
+            1 => "1 monitor not in this profile yet — save to keep it.".to_string(),
+            n => format!("{n} monitors not in this profile yet — save to keep them."),
+        }
+        .into(),
+    );
     ui.set_insp_match(listed.profile.matches.join("\n").into());
 
     {
@@ -868,6 +906,11 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let view = st.editor.as_ref().map(|e| e.view).unwrap_or_default();
     let drawn = canvas::layout_drawn(&outs, view);
     let selected = st.editor.as_ref().map(|e| e.selected).unwrap_or(0);
+    let unsaved: Vec<bool> = st
+        .editor
+        .as_ref()
+        .map(|e| e.unsaved.clone())
+        .unwrap_or_default();
     let model = st.canvas_model.clone();
     let zoom_pct = (view.scale * 100.0).round() as i32;
     let rows: Vec<CanvasMonitor> = drawn
@@ -881,6 +924,7 @@ fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             selected: d.index == selected,
             ghost: d.ghost,
             origin: d.origin,
+            unsaved: unsaved.get(d.index).copied().unwrap_or(false),
         })
         .collect();
 
@@ -1121,6 +1165,7 @@ fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     ui.set_insp_pos_y(y.to_string().into());
     ui.set_insp_is_origin(x == 0 && y == 0);
     ui.set_insp_enabled(m.enabled);
+    ui.set_insp_unsaved(ed.unsaved.get(i).copied().unwrap_or(false));
 
     let mut modes = modes_for(&st.live, &m.output);
     let current = m.mode.map(|md| md.to_string()).unwrap_or_default();
@@ -1426,6 +1471,7 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             if let Some(ed) = state.borrow_mut().editor.as_mut() {
                 ed.listed.profile = profile;
                 ed.listed.path = path.clone();
+                ed.unsaved.iter_mut().for_each(|u| *u = false);
                 if wrote_user_override {
                     ed.listed.source = profiles_io::Source::User;
                     ui.set_editor_source("user".into());
@@ -2005,5 +2051,56 @@ mod idle_tests {
             !include_str!("main.rs").contains(&repeated_timer),
             "periodic Slint timers prevent indefinite idle sleep"
         );
+    }
+}
+
+#[cfg(test)]
+mod unsaved_monitor_tests {
+    use super::*;
+
+    fn live(name: &str, desc: &str, x: i32) -> hyprctl::HyprMonitor {
+        hyprctl::HyprMonitor {
+            name: name.into(),
+            description: desc.into(),
+            x,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            transform: 0,
+            scale: 1.0,
+            available_modes: vec![],
+            refresh_rate: 60.0,
+        }
+    }
+
+    #[test]
+    fn newly_plugged_outputs_are_reported_and_seeded_from_live() {
+        let live = vec![
+            live("DP-1", "Dell U2720Q ABC12345", 0),
+            live("HDMI-A-1", "LG HDR 4K 0x0001", 1920),
+        ];
+        let connected = hyprctl::connected(&live);
+        let profile = Profile {
+            monitors: vec![Monitor {
+                output: "desc:Dell U2720Q".into(),
+                mode: None,
+                scale: 1.0,
+                position: None,
+                transform: 0,
+                enabled: true,
+            }],
+            ..seed_profile_from_live(&[], "x").0
+        };
+        let missing = live_missing_from_profile(&profile, &live, &connected);
+        assert_eq!(missing.len(), 1);
+        let m = monitor_from_live(missing[0]);
+        assert_eq!(m.output, "desc:LG HDR 4K");
+        assert_eq!(m.position, Some((1920, 0)));
+        assert_eq!(m.mode.map(|md| md.width), Some(1920));
+
+        // Once the entry exists, nothing is missing.
+        let mut full = profile.clone();
+        full.monitors.push(m);
+        assert!(live_missing_from_profile(&full, &live, &connected).is_empty());
     }
 }
