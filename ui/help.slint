@@ -8,6 +8,9 @@ export struct HelpNode {
     caption: string,
     label: string,
     kind: string,
+    // "decision" (square) | "outcome" (terminal triangle) | "input" (data
+    // card) | "effect" (borderless annotation).
+    shape: string,
     x: float,
     y: float,
     w: float,
@@ -18,7 +21,16 @@ export struct HelpNode {
 export struct HelpEdge {
     id: string,
     commands: string,
+    // Branch condition that selects this edge; empty for structural feeds.
+    label: string,
+    // Anchor for the label and the pruned double-slash mark.
+    mid-x: float,
+    mid-y: float,
     active: bool,
+    // A not-taken arm of an evaluated decision.
+    pruned: bool,
+    // Path commands for the two prune slashes; empty unless pruned.
+    slash: string,
 }
 
 export component HelpGraph inherits VerticalLayout {
@@ -86,21 +98,70 @@ export component HelpGraph inherits VerticalLayout {
             stroke-line-join: round;
             animate stroke { duration: 180ms; }
         }
+        // Pruned arms: two slashes across a branch a reached decision did not
+        // take (deterministic graph — this is the only "road not taken" mark).
+        // Empty `slash` (a taken or never-reached arm) draws nothing.
+        for e in root.muted-edges: Path {
+            x: 0;
+            y: 0;
+            width: root.graph-width * 1px;
+            height: root.graph-height * 1px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: root.graph-width;
+            viewbox-height: root.graph-height;
+            commands: e.slash;
+            fill: transparent;
+            stroke: Theme.fg-muted;
+            stroke-width: 2px;
+            stroke-line-cap: round;
+        }
 
         for n in root.nodes: Rectangle {
+            // Shape is the single source of truth: square = decision, rounded +
+            // terminal triangle = outcome, data card = input, borderless =
+            // effect annotation.
             x: n.x * 1px;
             y: n.y * 1px;
             width: n.w * 1px;
             height: n.h * 1px;
-            border-radius: Theme.radius-xs;
-            border-width: n.active ? Theme.border-width-strong : Theme.border-width;
+            border-radius: n.shape == "decision" ? 0
+                : (n.shape == "input" ? Theme.radius-md : Theme.radius-xs);
+            border-width: n.shape == "effect" ? 0
+                : (n.active ? Theme.border-width-strong : Theme.border-width);
             border-color: n.active ? Theme.accent : Theme.border;
-            background: n.active ? Theme.tile-selected : Theme.tile-bg;
+            background: n.shape == "effect" ? transparent
+                : (n.active ? Theme.tile-selected : Theme.tile-bg);
             animate border-color { duration: 180ms; }
             animate background { duration: 180ms; }
 
+            // Input data card: a left tab bar marks it as a given, not a
+            // decision.
+            if n.shape == "input": Rectangle {
+                x: 0;
+                y: 2px;
+                width: 3px;
+                height: parent.height - 4px;
+                background: Theme.tertiary;
+            }
+            // Outcome terminal marker: a small triangle leading into the
+            // outcome — "this branch ends here".
+            if n.shape == "outcome": Path {
+                x: -7px;
+                y: parent.height / 2 - 7px;
+                width: 14px;
+                height: 14px;
+                viewbox-x: 0;
+                viewbox-y: 0;
+                viewbox-width: 14;
+                viewbox-height: 14;
+                commands: "M 2 1 L 13 7 L 2 13 Z";
+                fill: n.active ? Theme.accent : Theme.border;
+            }
+
             VerticalLayout {
                 padding: Theme.space-sm;
+                padding-left: n.shape == "input" ? Theme.space-md : Theme.space-sm;
                 spacing: Theme.space-2xs;
                 alignment: start;
                 width: 100%;
@@ -123,6 +184,159 @@ export component HelpGraph inherits VerticalLayout {
                 }
             }
         }
+
+        // Branch conditions ride on their edge — the answer that selects it.
+        // Muted arms first, lit arm over them so the taken condition reads
+        // clearly.
+        for e in root.muted-edges: Rectangle {
+            // Transparent wrapper fills the canvas; the pill positions itself.
+            if e.label != "": Rectangle {
+                x: e.mid-x * 1px;
+                y: e.mid-y * 1px - 9px;
+                width: muted-lbl.preferred-width + 6px;
+                height: muted-lbl.preferred-height + 2px;
+                background: Theme.panel-bg;
+                border-radius: Theme.radius-xs;
+                muted-lbl := Text {
+                    text: e.label;
+                    font-size: Theme.font-label;
+                    color: Theme.fg-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        for e in root.lit-edges: Rectangle {
+            if e.label != "": Rectangle {
+                x: e.mid-x * 1px;
+                y: e.mid-y * 1px - 9px;
+                width: lit-lbl.preferred-width + 6px;
+                height: lit-lbl.preferred-height + 2px;
+                background: Theme.panel-bg;
+                border-radius: Theme.radius-xs;
+                lit-lbl := Text {
+                    text: e.label;
+                    font-size: Theme.font-label;
+                    color: Theme.accent;
+                    font-weight: Theme.font-weight-semibold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// One legend item: a swatch plus its meaning.
+component LegendItem inherits HorizontalLayout {
+    in property <string> text;
+    spacing: Theme.space-xs;
+    alignment: start;
+    @children
+    Text {
+        text: root.text;
+        color: Theme.fg-muted;
+        font-size: Theme.font-label;
+        vertical-alignment: center;
+    }
+}
+
+// Shape → meaning key for the decision-tree graphs.
+export component HelpLegend inherits VerticalLayout {
+    spacing: Theme.space-xs;
+    alignment: start;
+    HorizontalLayout {
+        spacing: Theme.space-lg;
+        alignment: start;
+        LegendItem {
+            text: "decision";
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                border-radius: 0;
+                border-width: Theme.border-width-strong;
+                border-color: Theme.accent;
+                background: Theme.tile-selected;
+            }
+        }
+        LegendItem {
+            text: "outcome";
+            Rectangle {
+                width: 22px;
+                height: 16px;
+                Path {
+                    x: 0;
+                    y: 1px;
+                    width: 14px;
+                    height: 14px;
+                    viewbox-width: 14;
+                    viewbox-height: 14;
+                    commands: "M 2 1 L 13 7 L 2 13 Z";
+                    fill: Theme.accent;
+                }
+                Rectangle {
+                    x: 8px;
+                    width: 14px;
+                    height: 16px;
+                    border-radius: Theme.radius-xs;
+                    border-width: Theme.border-width;
+                    border-color: Theme.border;
+                    background: Theme.tile-bg;
+                }
+            }
+        }
+        LegendItem {
+            text: "input / given";
+            Rectangle {
+                width: 20px;
+                height: 16px;
+                border-radius: Theme.radius-md;
+                border-width: Theme.border-width;
+                border-color: Theme.border;
+                background: Theme.tile-bg;
+                Rectangle {
+                    x: 0;
+                    y: 2px;
+                    width: 3px;
+                    height: parent.height - 4px;
+                    background: Theme.tertiary;
+                }
+            }
+        }
+        LegendItem {
+            text: "path taken";
+            Rectangle {
+                width: 24px;
+                height: 16px;
+                Rectangle {
+                    y: parent.height / 2 - 1px;
+                    height: 2px;
+                    background: Theme.accent;
+                }
+            }
+        }
+        LegendItem {
+            text: "not taken";
+            Rectangle {
+                width: 24px;
+                height: 16px;
+                Path {
+                    width: 24px;
+                    height: 16px;
+                    viewbox-width: 24;
+                    viewbox-height: 16;
+                    commands: "M 0 8 L 24 8 M 9 13 L 13 3 M 12 13 L 16 3";
+                    fill: transparent;
+                    stroke: Theme.fg-muted;
+                    stroke-width: 2px;
+                    stroke-line-cap: round;
+                }
+            }
+        }
+    }
+    KitMuted {
+        text: "Deterministic decision graph — no chance nodes. Bold-lit is the live path from daemon telemetry.";
+        wrap-text: true;
     }
 }
 
@@ -166,6 +380,8 @@ export component HelpPage inherits VerticalLayout {
         text: root.status-text;
         wrap-text: true;
     }
+
+    HelpLegend { }
 
     HelpGraph {
         heading: "Idle ladder";
