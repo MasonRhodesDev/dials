@@ -18,6 +18,9 @@ pub struct HelpLive {
     pub lid_closed: bool,
     pub ext_mon_count: u32,
     pub inhibitor: bool,
+    /// The compositor holds the session lock. Decided ladder model: a claim
+    /// governs only the unlocked machine, so this gates the keep-awake bit.
+    pub locked: bool,
     pub on_ac: bool,
     pub low_battery: bool,
     pub power_base: String,
@@ -39,6 +42,8 @@ struct WireCtx {
     lid_closed: bool,
     ext_mon_count: u32,
     inhibitor: bool,
+    #[serde(default)]
+    locked: bool,
     on_ac: bool,
     #[serde(default)]
     low_battery: bool,
@@ -62,6 +67,7 @@ impl HelpLive {
             lid_closed: f.ctx.lid_closed,
             ext_mon_count: f.ctx.ext_mon_count,
             inhibitor: f.ctx.inhibitor,
+            locked: f.ctx.locked,
             on_ac: f.ctx.on_ac,
             low_battery: f.ctx.low_battery,
             power_base: f.ctx.power_base,
@@ -189,7 +195,16 @@ mod tests {
         assert_eq!(live.to, "COUNTDOWN");
         assert!(live.lid_closed);
         assert_eq!(live.power_base, "ac");
+        assert!(!live.locked);
         assert_eq!(live.active_profile, "dual");
+    }
+
+    #[test]
+    fn parse_reads_the_lock_bit() {
+        let line = r#"{"version":2,"ts":1,"kind":"transition","from":"LID_OPEN","event":"Lock","to":"LID_OPEN","ctx":{"lid_closed":false,"ext_mon_count":0,"inhibitor":true,"locked":true,"on_ac":true,"low_battery":false,"power_base":"ac","desired_profile":"balanced","applied_profile":"balanced","active_profile":""}}"#;
+        let live = parse_line(line).unwrap();
+        assert!(live.locked, "the lock bit gates every keep-awake claim");
+        assert!(live.inhibitor);
     }
 
     #[test]

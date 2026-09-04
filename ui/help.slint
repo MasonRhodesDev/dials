@@ -128,9 +128,15 @@ export component HelpGraph inherits VerticalLayout {
 
 export component HelpPage inherits VerticalLayout {
     in property <string> status-text: "";
+    in property <string> idle-now: "";
     in property <string> lid-now: "";
     in property <string> power-now: "";
     in property <string> display-now: "";
+    in property <[HelpNode]> idle-nodes: [];
+    in property <[HelpEdge]> idle-muted-edges: [];
+    in property <[HelpEdge]> idle-lit-edges: [];
+    in property <float> idle-width: 1;
+    in property <float> idle-height: 1;
     in property <[HelpNode]> lid-nodes: [];
     in property <[HelpEdge]> lid-muted-edges: [];
     in property <[HelpEdge]> lid-lit-edges: [];
@@ -162,9 +168,19 @@ export component HelpPage inherits VerticalLayout {
     }
 
     HelpGraph {
-        heading: "Idle";
+        heading: "Idle ladder";
+        now-text: root.idle-now;
+        rules-note: "Rules: keep-awake has one power — it holds the unlocked machine out of the warn→lock ladder. Once locked, no claim is consulted again: blank always follows the lock, and 900s of true input idle suspends. Battery-low overrides keep-awake outright.";
+        nodes: root.idle-nodes;
+        muted-edges: root.idle-muted-edges;
+        lit-edges: root.idle-lit-edges;
+        graph-width: root.idle-width;
+        graph-height: root.idle-height;
+    }
+    HelpGraph {
+        heading: "Lid and dock";
         now-text: root.lid-now;
-        rules-note: "Rules: lid and dock choose a path. Terminals are idle/sleep or defer/awake. 30s grace precedes idle/sleep when undocked.";
+        rules-note: "Rules: lid and dock choose a path. Terminals are idle/sleep or defer/awake. 30s grace precedes idle/sleep when undocked. A keep-awake claim defers only while unlocked and off the battery-low floor. Docking ignores the lid as a suspend trigger, but a standing idle-suspend request outranks it.";
         nodes: root.lid-nodes;
         muted-edges: root.lid-muted-edges;
         lit-edges: root.lid-lit-edges;

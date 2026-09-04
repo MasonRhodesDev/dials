@@ -115,6 +115,11 @@ export component AppWindow inherits Window {
     in-out property <[string]> battery-sensors: [];
     in-out property <int> battery-sensor-index: 0;
     in-out property <bool> show-sensors: false;
+    in-out property <[HelpNode]> help-idle-nodes: [];
+    in-out property <[HelpEdge]> help-idle-muted-edges: [];
+    in-out property <[HelpEdge]> help-idle-lit-edges: [];
+    in-out property <float> help-idle-width: 1;
+    in-out property <float> help-idle-height: 1;
     in-out property <[HelpNode]> help-lid-nodes: [];
     in-out property <[HelpEdge]> help-lid-muted-edges: [];
     in-out property <[HelpEdge]> help-lid-lit-edges: [];
@@ -131,6 +136,7 @@ export component AppWindow inherits Window {
     in-out property <float> help-display-width: 1;
     in-out property <float> help-display-height: 1;
     in-out property <string> help-status-text: "";
+    in-out property <string> help-idle-now: "";
     in-out property <string> help-lid-now: "";
     in-out property <string> help-power-now: "";
     in-out property <string> help-display-now: "";
@@ -663,9 +669,15 @@ export component AppWindow inherits Window {
             height: 100%;
             HelpPage {
                 status-text: root.help-status-text;
+                idle-now: root.help-idle-now;
                 lid-now: root.help-lid-now;
                 power-now: root.help-power-now;
                 display-now: root.help-display-now;
+                idle-nodes: root.help-idle-nodes;
+                idle-muted-edges: root.help-idle-muted-edges;
+                idle-lit-edges: root.help-idle-lit-edges;
+                idle-width: root.help-idle-width;
+                idle-height: root.help-idle-height;
                 lid-nodes: root.help-lid-nodes;
                 lid-muted-edges: root.help-lid-muted-edges;
                 lid-lit-edges: root.help-lid-lit-edges;

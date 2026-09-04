@@ -1879,14 +1879,30 @@ fn apply_help_from_live(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         && !live.desired_profile.is_empty()
         && power_io::override_profile().as_deref() == Some(live.desired_profile.as_str());
 
-    let lid_g = help_graph::lid_graph(
-        &lid_body,
-        ext,
-        &ext_body,
-        &inh_body,
-        live.have_frame && live.inhibitor,
-        win,
-    );
+    let claim = help_graph::Claim {
+        inhibitor: live.have_frame && live.inhibitor,
+        locked: live.have_frame && live.locked,
+        battery_low: live.have_frame && live.low_battery,
+    };
+    let lock_body = if live.have_frame {
+        if live.locked {
+            String::from("locked · daemon")
+        } else {
+            String::from("unlocked · daemon")
+        }
+    } else {
+        String::from("—")
+    };
+    // The daemon reports the world FSM state, not the ladder node, so the
+    // input-idle box cannot show a real clock yet.
+    // TODO(Q7): body from "current ladder node + claim holders" telemetry.
+    let idle_body = if live.have_frame {
+        String::from("not reported yet")
+    } else {
+        String::from("—")
+    };
+    let lid_g = help_graph::lid_graph(&lid_body, ext, &ext_body, &inh_body, claim, win);
+    let idle_g = help_graph::idle_graph(&idle_body, &inh_body, &lock_body, &bat_body, claim, win);
     let power_g = help_graph::power_graph(
         &ac_body,
         &ext_body,
@@ -1903,7 +1919,8 @@ fn apply_help_from_live(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     } else {
         "Waiting for hyprstate daemon telemetry…".into()
     });
-    ui.set_help_lid_now(help_graph::lid_now(win, live.have_frame && live.inhibitor).into());
+    ui.set_help_idle_now(help_graph::idle_now(win, claim).into());
+    ui.set_help_lid_now(help_graph::lid_now(win, claim).into());
     ui.set_help_power_now(help_graph::power_now(power_base, desired).into());
     ui.set_help_display_now(
         help_graph::display_now(if live.have_frame {
@@ -1914,6 +1931,11 @@ fn apply_help_from_live(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         .into(),
     );
 
+    ui.set_help_idle_nodes(to_help_nodes(&idle_g.nodes));
+    ui.set_help_idle_muted_edges(to_help_edges(&idle_g.edges, false));
+    ui.set_help_idle_lit_edges(to_help_edges(&idle_g.edges, true));
+    ui.set_help_idle_width(idle_g.width);
+    ui.set_help_idle_height(idle_g.height);
     ui.set_help_lid_nodes(to_help_nodes(&lid_g.nodes));
     ui.set_help_lid_muted_edges(to_help_edges(&lid_g.edges, false));
     ui.set_help_lid_lit_edges(to_help_edges(&lid_g.edges, true));
