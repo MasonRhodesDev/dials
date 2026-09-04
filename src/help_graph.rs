@@ -60,28 +60,200 @@ pub struct Edge {
     pub active: bool,
 }
 
-pub fn lid_now(win: &str, inhibitor: bool) -> String {
+/// Live keep-awake claim, plus the two conditions that end its authority.
+///
+/// An app idle-inhibitor and the user's keep-awake toggle are one thing by
+/// design — the daemon cannot tell them apart, so neither does this. Under
+/// the decided ladder model (POWER_SPEC "The idle/power ladder", 2026-09-04)
+/// a claim governs **only the unlocked machine**: the lock ends every claim's
+/// authority (decision 3), and battery-low overrides it outright (decision 6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Claim {
+    /// An app inhibitor or the user toggle is held.
+    pub inhibitor: bool,
+    /// The compositor holds the session lock.
+    pub locked: bool,
+    /// On battery below the low threshold.
+    pub battery_low: bool,
+}
+
+impl Claim {
+    /// Whether the claim actually defers anything right now.
+    pub fn defers(self) -> bool {
+        self.inhibitor && !self.locked && !self.battery_low
+    }
+
+    /// Why a held claim is not deferring — empty when there is nothing to say.
+    fn revoked_note(self) -> &'static str {
+        if !self.inhibitor || self.defers() {
+            ""
+        } else if self.battery_low {
+            " — keep-awake overridden by battery-low"
+        } else {
+            " — keep-awake ended at the lock"
+        }
+    }
+}
+
+pub fn lid_now(win: &str, claim: Claim) -> String {
+    let note = claim.revoked_note();
     match win {
         "LID_OPEN" => {
-            if inhibitor {
-                "Now: defer/awake.".into()
+            if claim.defers() {
+                "Now: defer/awake — keep-awake held, unlocked.".into()
             } else {
-                "Now: idle/sleep.".into()
+                format!("Now: idle/sleep{note}.")
             }
         }
         "DOCKED" => {
-            if inhibitor {
-                "Now: docked — ignore lid; defer/awake.".into()
+            if claim.defers() {
+                "Now: docked — lid ignored; defer/awake (keep-awake held).".into()
             } else {
-                "Now: docked — ignore lid; idle/sleep.".into()
+                format!("Now: docked — lid ignored; idle/sleep{note}.")
             }
         }
-        "DEFERRED" => "Now: defer/awake — lid closed undocked; pause media.".into(),
+        "DEFERRED" => "Now: defer/awake — keep-awake held on an unlocked machine.".into(),
         "COUNTDOWN" => "Now: idle/sleep — 30s grace, then lock and suspend.".into(),
         "SUSPENDING" => "Now: idle/sleep — locking and suspending.".into(),
         "" => "Now: waiting for hyprstate daemon…".into(),
         other => format!("Now: {other}"),
     }
+}
+
+/// Plain-language "Now" line for the idle ladder.
+pub fn idle_now(win: &str, claim: Claim) -> String {
+    match lit_ladder_node(win, claim) {
+        "" => "Now: waiting for hyprstate daemon…".into(),
+        "AWAKE" => "Now: awake — no keep-awake needed (WARN not yet reported separately).".into(),
+        "HELD_AWAKE" => "Now: held awake — a keep-awake claim is deferring the 180s lock.".into(),
+        "LOCK" => {
+            "Now: locked — claims no longer count; blank follows at 30s (BLANK not yet reported \
+             separately)."
+                .into()
+        }
+        "GRACE" => "Now: 30s grace — locker proven live, then suspend.".into(),
+        "SUSPEND" => "Now: suspending.".into(),
+        other => format!("Now: {other}"),
+    }
+}
+
+/// Which ladder node the live telemetry can actually prove.
+///
+/// The daemon reports the world FSM state plus the claim bits, not the ladder
+/// node itself, so AWAKE/WARN and LOCK/BLANK collapse into one lit box each.
+// TODO(Q7): light from "current ladder node + claim holders" telemetry
+// (POWER_SPEC decision 7) instead of deriving from the world state.
+fn lit_ladder_node(win: &str, claim: Claim) -> &'static str {
+    match win {
+        "" => "",
+        "SUSPENDING" => "SUSPEND",
+        "COUNTDOWN" => "GRACE",
+        _ if claim.locked => "LOCK",
+        "DEFERRED" => "HELD_AWAKE",
+        _ if claim.defers() => "HELD_AWAKE",
+        _ => "AWAKE",
+    }
+}
+
+/// The decided idle ladder (POWER_SPEC "The idle/power ladder", 2026-09-04).
+///
+/// Keep-awake has exactly one power: it prevents entry into the warn→lock
+/// ladder while the machine is still unlocked. Once locked, no claim is
+/// consulted again — blank and suspend march unconditionally.
+///
+/// Lit path is derived from what the daemon reports today (world state +
+/// inhibitor/locked/battery-low); see [`lit_ladder_node`] for the gap.
+pub fn idle_graph(
+    idle_body: &str,
+    claim_body: &str,
+    lock_body: &str,
+    bat_body: &str,
+    claim: Claim,
+    win: &str,
+) -> Graph {
+    let lit = lit_ladder_node(win, claim);
+    let step = |q_id, q_cap, q_label, state_id: &'static str, fx_id, fx: &str| Step {
+        q_id,
+        q_cap,
+        q_label,
+        state_id,
+        state_label: state_id,
+        fx_id,
+        fx_label: fx.to_string(),
+        taken: lit == state_id,
+    };
+    cascade(
+        &[
+            ("idle", "input idle", idle_body, !win.is_empty()),
+            ("claim", "keep-awake", claim_body, claim.inhibitor),
+            ("lock", "session", lock_body, claim.locked),
+            ("bat", "battery", bat_body, claim.battery_low),
+        ],
+        &[
+            ("idle", "q-awake"),
+            ("claim", "q-held"),
+            ("bat", "q-held"),
+            ("lock", "q-blank"),
+        ],
+        &[
+            step(
+                "q-awake",
+                "if",
+                "local input < 180s",
+                "AWAKE",
+                "fx-awake",
+                "Stay lit.\nAny local input cancels a warn or grace.",
+            ),
+            step(
+                "q-held",
+                "else if",
+                "keep-awake held\nand unlocked",
+                "HELD_AWAKE",
+                "fx-held-awake",
+                "Stay lit, unlocked.\nRelease acts on true idle:\nbrief warn, then the lock.",
+            ),
+            step(
+                "q-warn",
+                "else if",
+                "no claim,\nidle 180s",
+                "WARN",
+                "fx-warn",
+                "Blur ramp.\nAny input cancels it.",
+            ),
+            step(
+                "q-lock",
+                "else if",
+                "warn elapsed",
+                "LOCK",
+                "fx-lock",
+                "Lock the session.\nEvery claim's authority ends here.",
+            ),
+            step(
+                "q-blank",
+                "else if",
+                "locked 30s",
+                "BLANK",
+                "fx-blank",
+                "Blank the screen — always,\nkeep-awake toggle included.",
+            ),
+            step(
+                "q-grace",
+                "else if",
+                "idle 900s total",
+                "GRACE",
+                "fx-grace",
+                "30s grace, locker proven live.\nBattery-low self-requests it\npast the claim.",
+            ),
+            step(
+                "q-suspend",
+                "else",
+                "grace elapsed",
+                "SUSPEND",
+                "fx-suspend",
+                "Suspend. A standing request outranks docked,\nso an idle docked laptop suspends too.",
+            ),
+        ],
+    )
 }
 
 pub fn power_now(base: &str, desired: &str) -> String {
@@ -104,19 +276,21 @@ pub fn display_now(active: &str) -> String {
 }
 
 /// `win` is the daemon's current State label (e.g. LID_OPEN).
-/// `inhibitor` is the live idle-inhibit bit (logind or wayland).
+/// `claim` is the live keep-awake claim plus the bits that revoke it.
 ///
 /// Lid and dock are path, not terminals. The only terminals are idle/sleep
 /// and defer/awake. 30s grace precedes idle/sleep when the lid is closed
-/// and undocked.
+/// and undocked. A claim defers only while the machine is unlocked and off
+/// the battery-low floor (POWER_SPEC decisions 3 and 6).
 pub fn lid_graph(
     lid_body: &str,
     ext_mon_count: u32,
     ext_body: &str,
     inh_body: &str,
-    inhibitor: bool,
+    claim: Claim,
     win: &str,
 ) -> Graph {
+    let defers = claim.defers();
     let open = win == "LID_OPEN";
     let docked = win == "DOCKED";
     let deferred = win == "DEFERRED";
@@ -125,8 +299,8 @@ pub fn lid_graph(
     let closed = docked || deferred || countdown || suspending;
     let known = open || closed;
     let grace = countdown || suspending;
-    let defer = (open && inhibitor) || (docked && inhibitor) || deferred;
-    let sleep = (open && !inhibitor) || (docked && !inhibitor) || grace;
+    let defer = (open && defers) || (docked && defers) || deferred;
+    let sleep = (open && !defers) || (docked && !defers) || grace;
 
     let inter_w = 168.0;
     let term_w = 168.0;
@@ -141,7 +315,7 @@ pub fn lid_graph(
         &[
             ("lid", "lid", lid_body, true),
             ("ext", "ext", ext_body, ext_mon_count >= 1),
-            ("inh", "idle-inhibit", inh_body, inhibitor),
+            ("inh", "keep-awake", inh_body, claim.inhibitor),
         ],
     );
     nodes.push(node(
@@ -169,7 +343,7 @@ pub fn lid_graph(
     nodes.push(node(
         "DOCKED",
         "intermediate",
-        "ignore lid",
+        "ignore lid\nidle suspend still applies",
         "out",
         col_inter,
         col_y(2, ROW_H),
@@ -180,7 +354,7 @@ pub fn lid_graph(
     nodes.push(node(
         "policy",
         "resolve",
-        "idle policy\nheld → defer\nreleased → idle",
+        "idle policy\nheld & unlocked → defer\nlocked · battery-low · released → idle",
         "logic",
         col_policy,
         col_y(1, ROW_H),
@@ -673,6 +847,15 @@ fn finish(nodes: Vec<Node>, mut edges: Vec<Edge>) -> Graph {
 mod tests {
     use super::*;
 
+    /// A keep-awake claim on an unlocked machine off the battery-low floor:
+    /// the only shape that actually defers anything.
+    fn held() -> Claim {
+        Claim {
+            inhibitor: true,
+            ..Claim::default()
+        }
+    }
+
     fn node_active(g: &Graph, id: &str) -> bool {
         g.nodes.iter().find(|n| n.id == id).unwrap().active
     }
@@ -719,7 +902,14 @@ mod tests {
 
     #[test]
     fn lid_tree_has_exactly_two_terminals() {
-        let g = lid_graph("open", 0, "0 externals", "idle", false, "LID_OPEN");
+        let g = lid_graph(
+            "open",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "LID_OPEN",
+        );
         let terms: Vec<_> = g
             .nodes
             .iter()
@@ -751,7 +941,7 @@ mod tests {
             0,
             "0 externals",
             "idle · none",
-            false,
+            Claim::default(),
             "COUNTDOWN",
         );
         assert!(node_active(&g, "q-ext"));
@@ -770,7 +960,14 @@ mod tests {
 
     #[test]
     fn lid_edges_are_orthogonal() {
-        let g = lid_graph("closed", 0, "0 externals", "idle", false, "COUNTDOWN");
+        let g = lid_graph(
+            "closed",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "COUNTDOWN",
+        );
         let h = edge_cmds(&g, "COUNTDOWN->t-sleep");
         assert!(h.contains('L'), "expected line segments: {h}");
         assert!(!h.contains('C'), "no bezier curves: {h}");
@@ -781,7 +978,7 @@ mod tests {
 
     #[test]
     fn lid_deferred_from_daemon() {
-        let g = lid_graph("closed", 0, "0 externals", "held", true, "DEFERRED");
+        let g = lid_graph("closed", 0, "0 externals", "held", held(), "DEFERRED");
         assert!(node_active(&g, "t-defer"));
         assert!(edge_active(&g, "inh->policy"));
         assert!(edge_active(&g, "q-ext->policy"));
@@ -797,7 +994,7 @@ mod tests {
             2,
             "2 externals",
             "held · daemon",
-            true,
+            held(),
             "LID_OPEN",
         );
         assert!(node_active(&g, "t-defer"));
@@ -813,7 +1010,14 @@ mod tests {
 
     #[test]
     fn lid_open_no_inhibit_lights_idle_sleep() {
-        let g = lid_graph("open", 0, "0 externals", "idle", false, "LID_OPEN");
+        let g = lid_graph(
+            "open",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "LID_OPEN",
+        );
         assert!(node_active(&g, "t-sleep"));
         assert!(edge_active(&g, "inh->policy"));
         assert!(edge_active(&g, "q-open->policy"));
@@ -824,7 +1028,7 @@ mod tests {
 
     #[test]
     fn lid_docked_is_intermediate_then_idle_terminal() {
-        let g = lid_graph("closed", 2, "2 externals", "held", true, "DOCKED");
+        let g = lid_graph("closed", 2, "2 externals", "held", held(), "DOCKED");
         assert!(node_active(&g, "DOCKED"));
         assert!(node_active(&g, "t-defer"));
         assert!(edge_active(&g, "q-ext->DOCKED"));
@@ -838,7 +1042,14 @@ mod tests {
 
     #[test]
     fn lid_suspending_keeps_grace_then_idle_sleep() {
-        let g = lid_graph("closed", 0, "0 externals", "idle", false, "SUSPENDING");
+        let g = lid_graph(
+            "closed",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "SUSPENDING",
+        );
         assert!(node_active(&g, "t-sleep"));
         assert!(node_active(&g, "COUNTDOWN"));
         assert!(edge_active(&g, "q-ext->policy"));
@@ -851,7 +1062,14 @@ mod tests {
 
     #[test]
     fn edges_dock_to_node_borders() {
-        let g = lid_graph("open", 0, "0 externals", "idle", false, "LID_OPEN");
+        let g = lid_graph(
+            "open",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "LID_OPEN",
+        );
         let open = g.nodes.iter().find(|n| n.id == "policy").unwrap();
         let state = g.nodes.iter().find(|n| n.id == "t-sleep").unwrap();
         let cmds = edge_cmds(&g, "policy->t-sleep");
@@ -869,10 +1087,198 @@ mod tests {
 
     #[test]
     fn lid_now_matches_lit_terminal() {
-        assert!(lid_now("LID_OPEN", true).contains("defer/awake"));
-        assert!(lid_now("LID_OPEN", false).contains("idle/sleep"));
-        assert!(lid_now("DOCKED", false).contains("idle/sleep"));
-        assert!(lid_now("DEFERRED", true).contains("defer/awake"));
+        assert!(lid_now("LID_OPEN", held()).contains("defer/awake"));
+        assert!(lid_now("LID_OPEN", Claim::default()).contains("idle/sleep"));
+        assert!(lid_now("DOCKED", Claim::default()).contains("idle/sleep"));
+        assert!(lid_now("DEFERRED", held()).contains("defer/awake"));
+    }
+
+    #[test]
+    fn a_claim_defers_only_on_an_unlocked_healthy_machine() {
+        assert!(held().defers());
+        assert!(
+            !Claim {
+                locked: true,
+                ..held()
+            }
+            .defers(),
+            "the lock ends every claim's authority (decision 3)"
+        );
+        assert!(
+            !Claim {
+                battery_low: true,
+                ..held()
+            }
+            .defers(),
+            "battery-low overrides keep-awake (decision 6)"
+        );
+        assert!(!Claim::default().defers());
+    }
+
+    #[test]
+    fn lid_resolve_text_states_the_decided_model() {
+        let g = lid_graph("open", 0, "0 externals", "held", held(), "LID_OPEN");
+        let policy = g.nodes.iter().find(|n| n.id == "policy").unwrap();
+        assert!(
+            policy.label.contains("held & unlocked → defer"),
+            "a claim defers only while unlocked: {}",
+            policy.label
+        );
+        assert!(
+            policy
+                .label
+                .contains("locked · battery-low · released → idle"),
+            "locked and battery-low bypass the claim: {}",
+            policy.label
+        );
+        let docked = g.nodes.iter().find(|n| n.id == "DOCKED").unwrap();
+        assert!(
+            docked.label.contains("idle suspend still applies"),
+            "docking neutralizes the lid trigger only; a request outranks it: {}",
+            docked.label
+        );
+        let inh = g.nodes.iter().find(|n| n.id == "inh").unwrap();
+        assert_eq!(inh.caption, "keep-awake");
+    }
+
+    #[test]
+    fn a_locked_claim_defers_nothing_on_the_lid_graph() {
+        let claim = Claim {
+            locked: true,
+            ..held()
+        };
+        let g = lid_graph("open", 0, "0 externals", "held", claim, "LID_OPEN");
+        assert!(node_active(&g, "t-sleep"));
+        assert!(!node_active(&g, "t-defer"));
+        assert!(lid_now("LID_OPEN", claim).contains("ended at the lock"));
+    }
+
+    #[test]
+    fn battery_low_beats_a_claim_on_the_lid_graph() {
+        let claim = Claim {
+            battery_low: true,
+            ..held()
+        };
+        let g = lid_graph("closed", 2, "2 externals", "held", claim, "DOCKED");
+        assert!(node_active(&g, "t-sleep"));
+        assert!(!node_active(&g, "t-defer"));
+        assert!(lid_now("DOCKED", claim).contains("overridden by battery-low"));
+    }
+
+    #[test]
+    fn idle_ladder_has_the_decided_rungs_in_order() {
+        let g = idle_graph("—", "idle", "unlocked", "ok", Claim::default(), "");
+        let rungs: Vec<_> = g
+            .nodes
+            .iter()
+            .filter(|n| n.caption == "base")
+            .map(|n| n.id.as_str())
+            .collect();
+        assert_eq!(
+            rungs,
+            [
+                "AWAKE",
+                "HELD_AWAKE",
+                "WARN",
+                "LOCK",
+                "BLANK",
+                "GRACE",
+                "SUSPEND"
+            ]
+        );
+        // Cascade shape: inputs → questions → rung → effect, left to right.
+        let q = g.nodes.iter().find(|n| n.id == "q-held").unwrap();
+        let rung = g.nodes.iter().find(|n| n.id == "HELD_AWAKE").unwrap();
+        let fx = g.nodes.iter().find(|n| n.id == "fx-held-awake").unwrap();
+        assert!(q.x + q.w < rung.x);
+        assert!(rung.x + rung.w < fx.x);
+        assert!(has_edge(&g, "claim->q-held"));
+        assert!(has_edge(&g, "bat->q-held"));
+        assert!(has_edge(&g, "lock->q-blank"));
+    }
+
+    #[test]
+    fn idle_ladder_rule_text_pins_the_decided_model() {
+        let g = idle_graph("—", "idle", "unlocked", "ok", Claim::default(), "");
+        let text = |id: &str| {
+            g.nodes
+                .iter()
+                .find(|n| n.id == id)
+                .unwrap()
+                .label
+                .to_string()
+        };
+        assert!(text("q-held").contains("unlocked"), "{}", text("q-held"));
+        assert!(
+            text("fx-lock").contains("authority ends here"),
+            "the lock ends every claim: {}",
+            text("fx-lock")
+        );
+        assert!(
+            text("fx-blank").contains("always"),
+            "a locked screen always blanks: {}",
+            text("fx-blank")
+        );
+        assert!(
+            text("fx-grace").contains("Battery-low"),
+            "battery-low self-requests past the claim: {}",
+            text("fx-grace")
+        );
+        assert!(
+            text("fx-suspend").contains("outranks docked"),
+            "a standing request outranks Docked: {}",
+            text("fx-suspend")
+        );
+    }
+
+    #[test]
+    fn idle_ladder_lights_from_daemon_state() {
+        let held_g = idle_graph("—", "held", "unlocked", "ok", held(), "DEFERRED");
+        assert!(node_active(&held_g, "HELD_AWAKE"));
+        assert!(!node_active(&held_g, "AWAKE"));
+
+        let locked = Claim {
+            locked: true,
+            ..held()
+        };
+        let locked_g = idle_graph("—", "held", "locked", "ok", locked, "LID_OPEN");
+        assert!(
+            node_active(&locked_g, "LOCK"),
+            "a claim on a locked machine holds nothing"
+        );
+        assert!(!node_active(&locked_g, "HELD_AWAKE"));
+
+        let grace = idle_graph("—", "idle", "locked", "ok", Claim::default(), "COUNTDOWN");
+        assert!(node_active(&grace, "GRACE"));
+        let susp = idle_graph("—", "idle", "locked", "ok", Claim::default(), "SUSPENDING");
+        assert!(node_active(&susp, "SUSPEND"));
+
+        // No daemon frame: nothing is lit and nothing is claimed.
+        let dark = idle_graph("—", "—", "—", "—", Claim::default(), "");
+        assert!(
+            dark.nodes
+                .iter()
+                .filter(|n| n.caption == "base")
+                .all(|n| !n.active)
+        );
+        assert!(idle_now("", Claim::default()).contains("waiting"));
+    }
+
+    #[test]
+    fn idle_ladder_admits_what_it_cannot_yet_see() {
+        // Q7 gap: the daemon reports the world state, not the ladder node, so
+        // AWAKE/WARN and LOCK/BLANK are one lit box each until it does.
+        assert!(idle_now("LID_OPEN", Claim::default()).contains("WARN not yet reported"));
+        assert!(
+            idle_now(
+                "LID_OPEN",
+                Claim {
+                    locked: true,
+                    ..Claim::default()
+                }
+            )
+            .contains("BLANK not yet reported")
+        );
     }
 
     #[test]

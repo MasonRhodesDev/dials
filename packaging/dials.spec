@@ -45,14 +45,14 @@ it. Configuration lives in ~/.config/hypr and is not part of this package.
 # too; map them so the RPM build stays offline.
 cat >> .cargo/config.toml << 'EOF'
 
-[source."git+https://github.com/MasonRhodesDev/monitor-profiles?rev=aef5f0e"]
+[source."git+https://github.com/MasonRhodesDev/monitor-profiles?rev=64d5d1e"]
 git = "https://github.com/MasonRhodesDev/monitor-profiles"
-rev = "aef5f0e"
+rev = "64d5d1e"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/MasonRhodesDev/hyprstate?rev=38172c2797ac905dfcd04bf5e58b485644d10a2c"]
+[source."git+https://github.com/MasonRhodesDev/hyprstate?rev=746bbd2608f19e7e9ac5113131710f54f6c98f9e"]
 git = "https://github.com/MasonRhodesDev/hyprstate"
-rev = "38172c2797ac905dfcd04bf5e58b485644d10a2c"
+rev = "746bbd2608f19e7e9ac5113131710f54f6c98f9e"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/MasonRhodesDev/slint-kit?rev=ccd7397c3da83ff835d6295d6ec3841fc32c8bac"]
