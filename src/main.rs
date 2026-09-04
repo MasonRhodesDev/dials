@@ -1618,6 +1618,7 @@ fn to_help_nodes(nodes: &[help_graph::Node]) -> ModelRc<HelpNode> {
                 caption: n.caption.clone().into(),
                 label: n.label.clone().into(),
                 kind: n.kind.clone().into(),
+                shape: n.shape.clone().into(),
                 x: n.x,
                 y: n.y,
                 w: n.w,
@@ -1636,7 +1637,12 @@ fn to_help_edges(edges: &[help_graph::Edge], active: bool) -> ModelRc<HelpEdge> 
             .map(|e| HelpEdge {
                 id: e.id.clone().into(),
                 commands: e.commands.clone().into(),
+                label: e.label.clone().into(),
+                mid_x: e.mid_x,
+                mid_y: e.mid_y,
                 active: e.active,
+                pruned: e.pruned,
+                slash: e.slash.clone().into(),
             })
             .collect::<Vec<_>>(),
     ))

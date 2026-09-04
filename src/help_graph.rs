@@ -45,7 +45,13 @@ pub struct Node {
     pub id: String,
     pub caption: String,
     pub label: String,
+    /// Layout/telemetry kind: "input" | "logic" | "out" | "effect".
     pub kind: String,
+    /// Decision-tree shape, the single source of truth for how the node is
+    /// drawn: "decision" (square), "outcome" (terminal triangle), "input"
+    /// (data card) or "effect" (borderless annotation beside its outcome).
+    /// Derived from `kind` in exactly one place — [`shape_for`].
+    pub shape: String,
     pub x: f32,
     pub y: f32,
     pub w: f32,
@@ -57,7 +63,31 @@ pub struct Node {
 pub struct Edge {
     pub id: String,
     pub commands: String,
+    /// Branch condition that selects this edge (the answer, e.g. "open",
+    /// "≥ 1 ext", "yes"/"no") — empty for structural feeds that carry no choice.
+    pub label: String,
+    /// A representative point on the edge, used to anchor the label and the
+    /// pruned double-slash mark.
+    pub mid_x: f32,
+    pub mid_y: f32,
     pub active: bool,
+    /// A not-taken out-branch of a decision that WAS evaluated. Deterministic
+    /// FSMs have no chance nodes, so this is the only "road not taken" mark.
+    pub pruned: bool,
+    /// Path commands for the two prune slashes, in graph viewbox coords.
+    /// Empty unless `pruned`.
+    pub slash: String,
+}
+
+/// The one place `kind` becomes a drawn shape. Square decisions, triangle
+/// outcomes, data-card inputs, borderless effect annotations.
+fn shape_for(kind: &str) -> &'static str {
+    match kind {
+        "logic" => "decision",
+        "out" => "outcome",
+        "input" => "input",
+        _ => "effect",
+    }
 }
 
 /// Live keep-awake claim, plus the two conditions that end its authority.
@@ -432,6 +462,26 @@ pub fn lid_graph(
     edges.push(ortho_h(&nodes, "policy", "t-sleep", sleep && !grace));
     edges.push(ortho_h(&nodes, "policy", "COUNTDOWN", grace));
     edges.push(ortho_h(&nodes, "COUNTDOWN", "t-sleep", grace));
+
+    // Branch conditions on every decision arm; effects stay on the outcomes.
+    label(&mut edges, "q-open->policy", "open");
+    label(&mut edges, "q-open->q-ext", "closed");
+    label(&mut edges, "q-ext->DOCKED", "≥ 1 ext");
+    label(&mut edges, "q-ext->policy", "0 ext");
+    label(&mut edges, "policy->t-defer", "held & unlocked");
+    label(&mut edges, "policy->t-sleep", "locked · released");
+    label(&mut edges, "policy->COUNTDOWN", "closed · undocked");
+    label(&mut edges, "COUNTDOWN->t-sleep", "30s");
+    // Prune the not-taken arms of the decisions the live path reached. q-ext
+    // is only reached when the lid is closed; leave it neutral when open.
+    prune_arms(&mut edges, known, &["q-open->policy", "q-open->q-ext"]);
+    prune_arms(&mut edges, closed, &["q-ext->DOCKED", "q-ext->policy"]);
+    prune_arms(
+        &mut edges,
+        known,
+        &["policy->t-defer", "policy->t-sleep", "policy->COUNTDOWN"],
+    );
+
     let mut graph = finish(nodes, edges);
     graph.height = bottom + 12.0 + PAD;
     graph
@@ -620,11 +670,24 @@ pub fn display_graph(signature_body: &str, matches: &[(String, String, String, b
     if matches.is_empty() {
         edges.push(ortho_h(&nodes, "select", "none", true));
         edges.push(ortho_h(&nodes, "none", "fx-none", true));
+        label(&mut edges, "select->none", "no fit");
     } else {
+        let mut arms = Vec::new();
         for (id, _, _, selected) in matches {
             edges.push(ortho_h(&nodes, "select", id, *selected));
             edges.push(ortho_h(&nodes, id, &format!("fx-{id}"), *selected));
+            let arm = format!("select->{id}");
+            label(
+                &mut edges,
+                &arm,
+                if *selected { "top rank" } else { "outranked" },
+            );
+            arms.push(arm);
         }
+        // The ranking is always evaluated; every arm but the winner is a road
+        // not taken.
+        let arm_refs: Vec<&str> = arms.iter().map(String::as_str).collect();
+        prune_arms(&mut edges, true, &arm_refs);
     }
     finish(nodes, edges)
 }
@@ -694,6 +757,22 @@ fn cascade(
             edges.push(ortho_v_spine(&nodes, step.q_id, next.q_id, fell));
         }
     }
+    // Every decision's two arms carry the answer that selects them: the match
+    // arm ("yes") to its outcome, the fall-through spine ("no") to the next
+    // question. Prune the not-taken arm of each decision the path reached
+    // (index ≤ winner); decisions past the winner were never evaluated.
+    for (i, step) in steps.iter().enumerate() {
+        let match_arm = format!("{}->{}", step.q_id, step.state_id);
+        label(&mut edges, &match_arm, "yes");
+        let evaluated = win.is_some_and(|w| i <= w);
+        if let Some(next) = steps.get(i + 1) {
+            let spine = format!("{}->{}", step.q_id, next.q_id);
+            label(&mut edges, &spine, "no");
+            prune_arms(&mut edges, evaluated, &[&match_arm, &spine]);
+        } else {
+            prune_arms(&mut edges, evaluated, &[&match_arm]);
+        }
+    }
     finish(nodes, edges)
 }
 
@@ -736,6 +815,7 @@ fn node(
         caption: caption.into(),
         label: label.into(),
         kind: kind.into(),
+        shape: shape_for(kind).into(),
         x,
         y,
         w,
@@ -775,11 +855,11 @@ fn ortho_h_gutter(nodes: &[Node], from: &str, to: &str, active: bool, gutter_x: 
     } else {
         format!("M {x0:.1} {y0:.1} L {gutter:.1} {y0:.1} L {gutter:.1} {y1:.1} L {x1:.1} {y1:.1}")
     };
-    Edge {
-        id: format!("{from}->{to}"),
-        commands,
-        active,
-    }
+    // Anchor the label/prune mark at the elbow (the actual gutter x, jitter
+    // included so a slash lands on the drawn line) at the mean docking height.
+    // Arms fanning from one decision to different rows separate vertically
+    // instead of stacking on a single point.
+    edge(from, to, commands, gutter, (y0 + y1) * 0.5, active)
 }
 
 /// Long edge routed below every node. Separate departure, bottom, and
@@ -800,13 +880,16 @@ fn ortho_bottom_lane(
     let y0 = a.y + a.h * 0.5;
     let x1 = b.x;
     let y1 = b.y + b.h * 0.5;
-    Edge {
-        id: format!("{from}->{to}"),
-        commands: format!(
+    edge(
+        from,
+        to,
+        format!(
             "M {x0:.1} {y0:.1} L {departure_x:.1} {y0:.1} L {departure_x:.1} {bottom_y:.1} L {arrival_x:.1} {bottom_y:.1} L {arrival_x:.1} {y1:.1} L {x1:.1} {y1:.1}"
         ),
+        departure_x,
+        (y0 + bottom_y) * 0.5,
         active,
-    }
+    )
 }
 
 /// Cascade fallthrough: docks to the left edge of logic boxes so the spine
@@ -821,10 +904,60 @@ fn ortho_v_spine(nodes: &[Node], from: &str, to: &str, active: bool) -> Edge {
     let x_b = b.x;
     let commands =
         format!("M {x_a:.1} {y0:.1} L {x:.1} {y0:.1} L {x:.1} {y1:.1} L {x_b:.1} {y1:.1}");
+    // The "else" / fall-through arm: anchor on the vertical spine, in the
+    // clear gutter just left of the logic column.
+    edge(from, to, commands, x - 16.0, (y0 + y1) * 0.5, active)
+}
+
+/// Build an [`Edge`] with a label/prune anchor and no branch label yet.
+fn edge(from: &str, to: &str, commands: String, mid_x: f32, mid_y: f32, active: bool) -> Edge {
     Edge {
         id: format!("{from}->{to}"),
         commands,
+        label: String::new(),
+        mid_x,
+        mid_y,
         active,
+        pruned: false,
+        slash: String::new(),
+    }
+}
+
+/// Two forward slashes across the edge at its anchor — Lucid's "branch not
+/// taken" mark, in graph viewbox coords.
+fn slash_marks(x: f32, y: f32) -> String {
+    format!(
+        "M {:.1} {:.1} L {:.1} {:.1} M {:.1} {:.1} L {:.1} {:.1}",
+        x - 4.0,
+        y + 6.0,
+        x + 1.0,
+        y - 6.0,
+        x + 3.0,
+        y + 6.0,
+        x + 8.0,
+        y - 6.0,
+    )
+}
+
+/// Put the branch condition on an edge (the answer that selects it).
+fn label(edges: &mut [Edge], id: &str, text: &str) {
+    if let Some(e) = edges.iter_mut().find(|e| e.id == id) {
+        e.label = text.into();
+    }
+}
+
+/// Mark the not-taken arms of a decision that was evaluated. A decision that
+/// was never reached is left neutral (`evaluated == false`): only the roads
+/// off a road actually travelled get the prune slashes.
+fn prune_arms(edges: &mut [Edge], evaluated: bool, ids: &[&str]) {
+    if !evaluated {
+        return;
+    }
+    for id in ids {
+        if let Some(e) = edges.iter_mut().find(|e| e.id == *id && !e.active) {
+            e.pruned = true;
+            e.slash = slash_marks(e.mid_x, e.mid_y);
+        }
     }
 }
 
@@ -858,6 +991,18 @@ mod tests {
 
     fn node_active(g: &Graph, id: &str) -> bool {
         g.nodes.iter().find(|n| n.id == id).unwrap().active
+    }
+
+    fn node_shape<'a>(g: &'a Graph, id: &str) -> &'a str {
+        g.nodes.iter().find(|n| n.id == id).unwrap().shape.as_str()
+    }
+
+    fn edge_label<'a>(g: &'a Graph, id: &str) -> &'a str {
+        g.edges.iter().find(|e| e.id == id).unwrap().label.as_str()
+    }
+
+    fn edge_pruned(g: &Graph, id: &str) -> bool {
+        g.edges.iter().find(|e| e.id == id).unwrap().pruned
     }
 
     fn edge_active(g: &Graph, id: &str) -> bool {
@@ -1345,6 +1490,159 @@ mod tests {
         assert_eq!(action.caption, "action");
         assert!(edge_active(&g, "select->m0"));
         assert!(!edge_active(&g, "select->m1"));
+    }
+
+    #[test]
+    fn shapes_follow_decision_tree_convention() {
+        // Lucidchart mapping: square = decision, terminal triangle = outcome,
+        // data card = input/given, borderless = effect annotation.
+        let g = lid_graph("open", 2, "2 externals", "held", held(), "DOCKED");
+        for id in ["q-open", "q-ext", "policy"] {
+            assert_eq!(node_shape(&g, id), "decision", "{id} is a decision");
+        }
+        for id in ["DOCKED", "COUNTDOWN", "t-defer", "t-sleep"] {
+            assert_eq!(node_shape(&g, id), "outcome", "{id} is an outcome");
+        }
+        for id in ["lid", "ext", "inh"] {
+            assert_eq!(
+                node_shape(&g, id),
+                "input",
+                "{id} is a given, not a decision"
+            );
+        }
+
+        let p = power_graph(
+            "plugged",
+            "2 externals",
+            "ok",
+            &PowerPolicy::default(),
+            "balanced",
+            false,
+            "docked-ac",
+        );
+        assert_eq!(node_shape(&p, "q-dock"), "decision");
+        assert_eq!(node_shape(&p, "docked-ac"), "outcome");
+        assert_eq!(node_shape(&p, "fx-docked-ac"), "effect");
+        assert_eq!(node_shape(&p, "ac"), "input");
+
+        let idle = idle_graph("—", "held", "unlocked", "ok", held(), "DEFERRED");
+        assert_eq!(node_shape(&idle, "q-held"), "decision");
+        assert_eq!(node_shape(&idle, "HELD_AWAKE"), "outcome");
+        assert_eq!(node_shape(&idle, "fx-held-awake"), "effect");
+        assert_eq!(node_shape(&idle, "idle"), "input");
+
+        let d = display_graph("Dell", &[("m0".into(), "sel".into(), "x".into(), true)]);
+        assert_eq!(node_shape(&d, "sig"), "input");
+        assert_eq!(node_shape(&d, "select"), "decision");
+        assert_eq!(node_shape(&d, "m0"), "outcome");
+        assert_eq!(node_shape(&d, "fx-m0"), "effect");
+    }
+
+    #[test]
+    fn branch_labels_carry_the_condition_not_the_effect() {
+        let g = lid_graph("open", 2, "2 externals", "held", held(), "DOCKED");
+        // Each decision's arms carry the answer that selects them.
+        assert_eq!(edge_label(&g, "q-open->policy"), "open");
+        assert_eq!(edge_label(&g, "q-open->q-ext"), "closed");
+        assert_eq!(edge_label(&g, "q-ext->DOCKED"), "≥ 1 ext");
+        assert_eq!(edge_label(&g, "q-ext->policy"), "0 ext");
+        assert_eq!(edge_label(&g, "policy->t-defer"), "held & unlocked");
+        assert_eq!(edge_label(&g, "policy->t-sleep"), "locked · released");
+        assert_eq!(edge_label(&g, "policy->COUNTDOWN"), "closed · undocked");
+
+        // Cascade decisions answer yes / no.
+        let p = power_graph(
+            "plugged",
+            "0 externals",
+            "ok",
+            &PowerPolicy::default(),
+            "balanced",
+            false,
+            "ac",
+        );
+        assert_eq!(edge_label(&p, "q-dock->docked-ac"), "yes");
+        assert_eq!(edge_label(&p, "q-dock->q-ac"), "no");
+        // The effect text stays on its node; it never rides on an edge.
+        let fx = p.nodes.iter().find(|n| n.id == "fx-ac").unwrap();
+        assert!(fx.label.contains("Apply"));
+        assert!(
+            p.edges.iter().all(|e| !e.label.contains("Apply")),
+            "effects must not become edge labels"
+        );
+    }
+
+    #[test]
+    fn evaluated_decisions_prune_their_not_taken_arms() {
+        // Winner is the last rung: every earlier decision was reached, and its
+        // match arm is a road not taken — pruned, with the slash marks.
+        let g = power_graph(
+            "battery",
+            "0 externals",
+            "low",
+            &PowerPolicy::default(),
+            "powersave",
+            false,
+            "battery",
+        );
+        for arm in ["q-dock->docked-ac", "q-ac->ac-out", "q-low->battery-low"] {
+            assert!(edge_pruned(&g, arm), "{arm} is a not-taken arm");
+            assert!(!edge_active(&g, arm));
+            let e = g.edges.iter().find(|e| e.id == arm).unwrap();
+            assert!(!e.slash.is_empty(), "{arm} carries the prune slashes");
+        }
+        assert!(
+            !edge_pruned(&g, "q-bat->battery"),
+            "the taken arm is not pruned"
+        );
+
+        // Winner is the first rung: the else-spine it did not fall through is
+        // pruned; decisions below were never reached and stay neutral.
+        let d = power_graph(
+            "plugged",
+            "2 externals",
+            "ok",
+            &PowerPolicy::default(),
+            "balanced",
+            false,
+            "docked-ac",
+        );
+        assert!(
+            edge_pruned(&d, "q-dock->q-ac"),
+            "the winner did not fall through"
+        );
+        assert!(
+            !edge_pruned(&d, "q-ac->ac-out"),
+            "a decision never reached is left neutral"
+        );
+        assert!(!edge_pruned(&d, "q-low->battery-low"));
+
+        // Lid: q-ext is only reached when the lid is closed.
+        let open = lid_graph(
+            "open",
+            0,
+            "0 externals",
+            "idle",
+            Claim::default(),
+            "LID_OPEN",
+        );
+        assert!(
+            !edge_pruned(&open, "q-ext->DOCKED"),
+            "q-ext is never reached with the lid open"
+        );
+        assert!(
+            edge_pruned(&open, "q-open->q-ext"),
+            "the closed spine is the road not taken"
+        );
+        assert!(edge_pruned(&open, "policy->t-defer"));
+        assert!(edge_pruned(&open, "policy->COUNTDOWN"));
+        assert!(
+            !edge_pruned(&open, "policy->t-sleep"),
+            "the taken policy arm is not pruned"
+        );
+
+        // No daemon frame: nothing evaluated, nothing pruned.
+        let dark = idle_graph("—", "—", "—", "—", Claim::default(), "");
+        assert!(dark.edges.iter().all(|e| !e.pruned));
     }
 
     #[test]
