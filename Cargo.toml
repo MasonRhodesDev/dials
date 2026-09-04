@@ -8,7 +8,7 @@ repository = "https://github.com/MasonRhodesDev/dials"
 publish = false
 
 [dependencies]
-monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "aef5f0e" }
+monitor-profiles = { git = "https://github.com/MasonRhodesDev/monitor-profiles", rev = "64d5d1e" }
 xdg-paths = "0.2.0"
 # Git pins (not path) so RPM/PKGBUILD can vendor from a git-archive tarball.
 hyprstate-fsm = { git = "https://github.com/MasonRhodesDev/hyprstate", rev = "746bbd2608f19e7e9ac5113131710f54f6c98f9e" }

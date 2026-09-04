@@ -1103,7 +1103,7 @@ name = "dials"
 version = "0.4.4"
 dependencies = [
  "hyprstate-fsm",
- "monitor-profiles 0.1.0 (git+https://github.com/MasonRhodesDev/monitor-profiles?rev=aef5f0e)",
+ "monitor-profiles",
  "serde",
  "serde_json",
  "slint",
@@ -1922,7 +1922,7 @@ name = "hyprstate-fsm"
 version = "5.0.0"
 source = "git+https://github.com/MasonRhodesDev/hyprstate?rev=746bbd2608f19e7e9ac5113131710f54f6c98f9e#746bbd2608f19e7e9ac5113131710f54f6c98f9e"
 dependencies = [
- "monitor-profiles 0.1.0 (git+https://github.com/MasonRhodesDev/monitor-profiles?rev=64d5d1e)",
+ "monitor-profiles",
  "serde",
 ]
 
@@ -2952,15 +2952,6 @@ dependencies = [
 name = "monitor-profiles"
 version = "0.1.0"
 source = "git+https://github.com/MasonRhodesDev/monitor-profiles?rev=64d5d1e#64d5d1ed079582a2014ebf23c403a3ca03ee9c64"
-dependencies = [
- "serde",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "monitor-profiles"
-version = "0.1.0"
-source = "git+https://github.com/MasonRhodesDev/monitor-profiles?rev=aef5f0e#aef5f0e76afa78171a01c65ebc88d2dd7626d80d"
 dependencies = [
  "serde",
  "toml 0.9.12+spec-1.1.0",
