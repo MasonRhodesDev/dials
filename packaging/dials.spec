@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.4
+Version:        0.4.5
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
@@ -99,6 +99,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Tue Oct 13 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.5-1
+- Displays shows each monitor's wallpaper on its tile and sets it from the
+  inspector through lmtt: the origin display owns the global wallpaper, any
+  other display can override it. Images are picked with the XDG portal.
+- Pages are feature-gated in-process modules (displays, power, help,
+  wallpaper) that meet only through hooks; More is always present.
+- Recommends lmtt (wallpaper selection; `wallpaper unset` needs 0.3.2).
+
 * Fri Aug 28 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.4-1
 - Profile editor shows newly plugged monitors (seeded from live layout) and marks them unsaved until the profile is saved.
 
