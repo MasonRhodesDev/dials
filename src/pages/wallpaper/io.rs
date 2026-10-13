@@ -6,9 +6,8 @@
 //! edits the TOML itself and never calls hypr-DE's wrapper script (hypr-DE
 //! depends on dials; calling back would invert that).
 //!
-//! Convention kept here: the output at logical (0,0) — the origin — *is*
-//! the global wallpaper. Choosing on the origin writes `[background]` and
-//! removes any override the origin had, so the two never drift.
+//! Which output counts as the origin (whose wallpaper *is* the global one)
+//! is the Displays page's call; this module only resolves and writes.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -48,17 +47,13 @@ impl Default for Resolved {
     }
 }
 
-/// The page's model: the origin/global row plus every other output.
+/// The registry as it applies to the live outputs.
 #[derive(Debug, Clone, Default)]
 pub struct Current {
-    /// None when no outputs are known (no hyprctl).
-    pub origin: Option<OutputInfo>,
-    /// Resolved for the origin's identity (or `"default"` without outputs).
+    /// `[background]` as lmtt itself resolves it (the `"default"` identity).
     pub global: Resolved,
-    pub others: Vec<(OutputInfo, Resolved)>,
-    /// Every `[output.*]` key in the user profile; switching per-display off
-    /// removes them all.
-    pub all_override_keys: Vec<String>,
+    /// Every live output with what it resolves to.
+    pub outputs: Vec<(OutputInfo, Resolved)>,
     pub error: Option<String>,
 }
 
@@ -95,18 +90,6 @@ impl std::fmt::Display for ApplyError {
             ),
         }
     }
-}
-
-/// The origin output: at (0,0), else the top-left-most. None when empty.
-pub fn origin_of(outputs: &[OutputInfo]) -> Option<usize> {
-    if let Some(i) = outputs.iter().position(|o| o.x == 0 && o.y == 0) {
-        return Some(i);
-    }
-    outputs
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, o)| (o.x, o.y))
-        .map(|(i, _)| i)
 }
 
 /// Registry key dials writes for an output: the full hyprctl description
@@ -163,36 +146,21 @@ fn resolve_for(registry: &Registry, output: &OutputInfo) -> Resolved {
 
 /// Pure classification of a loaded registry against the live outputs.
 pub fn classify(registry: &Registry, outputs: &[OutputInfo]) -> Current {
-    let origin_idx = origin_of(outputs);
-    let global = match origin_idx {
-        Some(i) => resolve_for(registry, &outputs[i]),
-        None => {
-            let r = registry.resolve(&OutputIdentity::new("default", None), None);
-            let (layer, is_override) = layer_of(r.path_source);
-            Resolved {
-                path: r.path,
-                layer,
-                is_override,
-                override_keys: Vec::new(),
-            }
-        }
+    let r = registry.resolve(&OutputIdentity::new("default", None), None);
+    let (layer, is_override) = layer_of(r.path_source);
+    let global = Resolved {
+        path: r.path,
+        layer,
+        is_override,
+        override_keys: Vec::new(),
     };
-    let others = outputs
+    let outputs = outputs
         .iter()
-        .enumerate()
-        .filter(|(i, _)| Some(*i) != origin_idx)
-        .map(|(_, o)| (o.clone(), resolve_for(registry, o)))
+        .map(|o| (o.clone(), resolve_for(registry, o)))
         .collect();
-    let all_override_keys = registry
-        .user
-        .as_ref()
-        .map(|p| p.output.keys().cloned().collect())
-        .unwrap_or_default();
     Current {
-        origin: origin_idx.map(|i| outputs[i].clone()),
         global,
-        others,
-        all_override_keys,
+        outputs,
         error: None,
     }
 }
@@ -202,21 +170,14 @@ pub fn classify(registry: &Registry, outputs: &[OutputInfo]) -> Current {
 pub fn current(outputs: &[OutputInfo]) -> Current {
     match Registry::load_current_user() {
         Ok(registry) => classify(&registry, outputs),
-        Err(e) => {
-            let origin_idx = origin_of(outputs);
-            Current {
-                origin: origin_idx.map(|i| outputs[i].clone()),
-                global: Resolved::default(),
-                others: outputs
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| Some(*i) != origin_idx)
-                    .map(|(_, o)| (o.clone(), Resolved::default()))
-                    .collect(),
-                all_override_keys: Vec::new(),
-                error: Some(format!("appearance profile: {e}")),
-            }
-        }
+        Err(e) => Current {
+            global: Resolved::default(),
+            outputs: outputs
+                .iter()
+                .map(|o| (o.clone(), Resolved::default()))
+                .collect(),
+            error: Some(format!("appearance profile: {e}")),
+        },
     }
 }
 
@@ -386,15 +347,6 @@ mod tests {
     }
 
     #[test]
-    fn origin_is_the_output_at_zero() {
-        let outs = [out("DP-2", "", 1920, 0), out("DP-1", "", 0, 0)];
-        assert_eq!(origin_of(&outs), Some(1));
-        let outs = [out("DP-2", "", 1920, 0), out("DP-1", "", 100, 50)];
-        assert_eq!(origin_of(&outs), Some(1));
-        assert_eq!(origin_of(&[]), None);
-    }
-
-    #[test]
     fn selector_prefers_full_description() {
         assert_eq!(
             selector_for("DP-1", "Dell U2720Q ABC12345"),
@@ -404,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_reports_origin_global_and_overrides() {
+    fn classify_reports_global_and_overrides() {
         let mut output = BTreeMap::new();
         output.insert("desc:X".to_string(), bg("/w/x.png"));
         output.insert("DP-1".to_string(), bg("/w/stray.png"));
@@ -423,22 +375,22 @@ mod tests {
             out("DP-2", "X", 1920, 0),
         ];
         let cur = classify(&registry, &outs);
-        assert_eq!(
-            cur.origin.as_ref().map(|o| o.connector.as_str()),
-            Some("DP-1")
-        );
-        // The stray case: the origin carries its own override.
-        assert_eq!(cur.global.path.as_deref(), Some(Path::new("/w/stray.png")));
-        assert!(cur.global.is_override);
+        // `[background]` as lmtt resolves it, never an output's override.
+        assert_eq!(cur.global.path.as_deref(), Some(Path::new("/w/global.png")));
+        assert!(!cur.global.is_override);
         assert_eq!(cur.global.layer, "user");
-        assert_eq!(cur.global.override_keys, vec!["DP-1"]);
         let by_name = |n: &str| {
-            cur.others
+            cur.outputs
                 .iter()
                 .find(|(o, _)| o.connector == n)
                 .map(|(_, r)| r.clone())
                 .unwrap()
         };
+        // The stray case: the output at the origin carries its own override.
+        let origin = by_name("DP-1");
+        assert_eq!(origin.path.as_deref(), Some(Path::new("/w/stray.png")));
+        assert!(origin.is_override);
+        assert_eq!(origin.override_keys, vec!["DP-1"]);
         let x = by_name("DP-2");
         assert_eq!(x.path.as_deref(), Some(Path::new("/w/x.png")));
         assert!(x.is_override);
@@ -447,19 +399,17 @@ mod tests {
         assert_eq!(third.path.as_deref(), Some(Path::new("/w/global.png")));
         assert!(!third.is_override);
         assert!(third.override_keys.is_empty());
-        assert_eq!(cur.all_override_keys, vec!["DP-1", "desc:X"]);
 
         let empty = classify(&Registry::default(), &outs);
         assert_eq!(empty.global.layer, "none");
         assert!(empty.global.path.is_none());
 
         let none = classify(&registry, &[]);
-        assert!(none.origin.is_none());
+        assert!(none.outputs.is_empty());
         assert_eq!(
             none.global.path.as_deref(),
             Some(Path::new("/w/global.png"))
         );
-        assert!(!none.global.is_override);
     }
 
     #[test]

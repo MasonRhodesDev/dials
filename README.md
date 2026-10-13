@@ -9,11 +9,9 @@ sections:
   TOML under `~/.config/hypr/profiles` (and shared `/etc/monitor-profiles`
   for the greeter). Save relies on
   [hyprstate](https://github.com/MasonRhodesDev/hyprstate)'s hot-reload —
-  there is no separate Apply.
+  there is no separate Apply. Each monitor tile shows its wallpaper and the
+  inspector sets it (see Wallpaper).
 - **Power** — hyprstate's power policy map, sensors, and overrides.
-- **Appearance** — the desktop background, read from the
-  [appearance-profiles](https://github.com/MasonRhodesDev/appearance-profiles)
-  registry and set through [lmtt](https://github.com/MasonRhodesDev/linux-multi-theme-toggle).
 - **Help** — live graph of how hyprstate derives lid/power/display state.
 - **More** — every other settings tool installed on the system, launched in
   its own window.
@@ -24,13 +22,15 @@ sections:
 
 ![Profiles list](docs/screenshots/profiles.png)
 
-## Appearance
+## Wallpaper
 
-The origin display (the one at logical 0,0) sets the global wallpaper:
-every other display inherits it and lmtt derives the palette from it, so
-the two never differ. "Different wallpaper per display" (off by default)
-gives the other displays their own image; turning it off again removes
-those overrides. Images are picked with the XDG portal file chooser.
+The display at the origin (logical 0,0) owns the global wallpaper: every
+other display inherits it and lmtt derives the palette from it, so the two
+never differ. Its inspector shows just the selector. Any other display
+shows an "Override the global wallpaper" checkbox; ticked, Choose… gives
+that display its own image, unticked removes it. Changes apply at once
+(the appearance registry is separate from the profile Save writes). Images
+are picked with the XDG portal file chooser.
 
 Reads use the registry directly (`~/.config/appearance-profiles/default.toml`
 over the system and packaged layers). Writes go only through `lmtt`:
@@ -42,6 +42,17 @@ current wallpaper but cannot change it. Whether the desktop itself
 repaints depends on the wallpaper daemon: on hypr-DE, swaybg reads the
 registry when it starts, so it follows once hypr-DE restarts it from an
 lmtt reload module; the lock screen and greeter (vigil) follow immediately.
+
+## Pages are optional modules
+
+Each core-family integration is an in-process page module behind a cargo
+feature (`src/pages`): `displays` (monitor-profiles, hyprctl), `power` and
+`help` (hyprstate), `wallpaper` (lmtt and the appearance registry; plugs
+into Displays through the hooks in `src/pages/mod.rs`). A build without a
+feature drops that page and its crates; a page whose tool is missing at
+run time hides its toolbar button. `cargo build --no-default-features`
+leaves only More. Third-party tools never become pages: More launches them
+in their own window.
 
 ## Listing a tool under More
 
@@ -78,8 +89,8 @@ cargo run --release
 ```
 
 Displays and Power need `hyprctl` on `PATH` (Hyprland session) and
-hyprstate for apply; Appearance needs `lmtt` to set a wallpaper (and
-`hyprctl` to tell displays apart); More works on any Wayland compositor. Packaged
+hyprstate for apply; the Wallpaper field needs `lmtt`; More works on any
+Wayland compositor. Packaged
 Fedora/Arch installs put the binary in `/usr/bin` and a Settings desktop
 entry in `/usr/share/applications`.
 

@@ -17,7 +17,7 @@ depends=('gcc-libs' 'libxkbcommon' 'mesa' 'fontconfig' 'wayland')
 makedepends=('cargo' 'git' 'clang' 'python' 'ninja' 'cmake' 'pkgconf' 'fontconfig')
 checkdepends=('desktop-file-utils')
 optdepends=('hyprstate: display profile apply and power overrides'
-            'lmtt: wallpaper selection on the Appearance page')
+            'lmtt: wallpaper selection in Displays')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('3cafd93bcd497c8a16a947dd82de22a5c5eac76c799eafd5408ef4fd0a261f6a')
 
