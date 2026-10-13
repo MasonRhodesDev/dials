@@ -26,6 +26,8 @@ pub struct AppState {
     pub hyprstate: hyprstate::telemetry::HelpLive,
     #[cfg(feature = "wallpaper")]
     pub wallpaper: pages::wallpaper::State,
+    #[cfg(feature = "appearance")]
+    pub appearance: pages::appearance::State,
     /// External settings tools (More page), in display order.
     pub entries: Vec<entries::Entry>,
 }
@@ -59,6 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hyprstate: Default::default(),
         #[cfg(feature = "wallpaper")]
         wallpaper: Default::default(),
+        #[cfg(feature = "appearance")]
+        appearance: Default::default(),
         entries: Vec::new(),
     }));
 
@@ -91,6 +95,7 @@ mod idle_tests {
         include_str!("pages/power/mod.rs"),
         include_str!("pages/help/mod.rs"),
         include_str!("pages/wallpaper/mod.rs"),
+        include_str!("pages/appearance/mod.rs"),
         include_str!("hyprstate/mod.rs"),
     ];
 

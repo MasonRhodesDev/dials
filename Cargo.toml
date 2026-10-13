@@ -31,11 +31,15 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "file_chooser"], optional = true }
 async-io = { version = "2", optional = true }
 url = { version = "2", optional = true }
+# Appearance page: lmtt's own option detectors (same rev slint-kit pins) and
+# comment-preserving edits of ~/.config/lmtt/config.toml.
+lmtt-core = { git = "https://github.com/MasonRhodesDev/linux-multi-theme-toggle", rev = "344529cd124c131da40409b152bc1604eebd53d0", optional = true }
+toml_edit = { version = "0.25", optional = true }
 
 [features]
 # Each core-family integration is a page module behind a feature (src/pages).
 # A build without one drops that page and its crates; More always remains.
-default = ["displays", "power", "help", "wallpaper"]
+default = ["displays", "power", "help", "wallpaper", "appearance"]
 # hyprstate daemon surface: telemetry client and policy types.
 hyprstate = ["dep:hyprstate-fsm"]
 # Displays: monitor-profiles editor on hyprctl.
@@ -47,6 +51,8 @@ help = ["hyprstate", "displays", "power"]
 # Wallpaper: per-display backgrounds in Displays, through lmtt and the
 # appearance-profiles registry, picked with the XDG portal.
 wallpaper = ["displays", "dep:appearance-profiles", "dep:image", "dep:ashpd", "dep:async-io", "dep:url"]
+# Appearance: lmtt's settings, rendered from its config schema.
+appearance = ["dep:lmtt-core", "dep:toml_edit"]
 
 [build-dependencies]
 slint-build = "=1.17.1"
