@@ -14,8 +14,9 @@ import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.sli
 import { PowerPage } from "power.slint";
 import { HelpPage, HelpNode, HelpEdge } from "help.slint";
 import { WallpaperField } from "wallpaper.slint";
+import { AppearancePage, SettingsField, Swatch } from "appearance.slint";
 
-export { Theme, Palette, HelpNode, HelpEdge }
+export { Theme, Palette, HelpNode, HelpEdge, SettingsField, Swatch }
 
 /// One external settings tool (More page). `section` groups rows.
 export struct SettingsEntry {
@@ -148,6 +149,16 @@ export component AppWindow inherits Window {
     in-out property <bool> page-displays: true;
     in-out property <bool> page-power: true;
     in-out property <bool> page-help: true;
+    in-out property <bool> page-appearance: true;
+    // Appearance page (lmtt settings module).
+    in-out property <[SettingsField]> appearance-fields: [];
+    in-out property <string> appearance-mode: "dark";
+    in-out property <[Swatch]> appearance-swatches: [];
+    in-out property <string> appearance-wallpaper: "";
+    in-out property <bool> appearance-busy: false;
+    in-out property <bool> appearance-dirty: false;
+    in-out property <bool> appearance-available: false;
+    in-out property <string> appearance-status: "";
     // Wallpaper field in the Displays inspector (wallpaper page module).
     in-out property <bool> wallpaper-enabled: false;
     in-out property <bool> wallpaper-is-origin: false;
@@ -202,6 +213,13 @@ export component AppWindow inherits Window {
     callback wallpaper-picked(string, string);
     callback wallpaper-job-done(int, bool, string);
     callback wallpaper-decoded(string, image);
+    callback appearance-set-mode(string);
+    callback appearance-field-text(string, string);
+    callback appearance-field-toggle(string, bool);
+    callback appearance-field-select(string, int);
+    callback appearance-apply();
+    callback appearance-revert();
+    callback appearance-job-done(int, bool, string);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -230,6 +248,14 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.section = 1;
                         root.section-changed(1);
+                    }
+                }
+                if root.page-appearance: KitButton {
+                    text: "Appearance";
+                    primary: root.section == 4;
+                    clicked => {
+                        root.section = 4;
+                        root.section-changed(4);
                     }
                 }
                 if root.page-help: KitButton {
@@ -747,6 +773,29 @@ export component AppWindow inherits Window {
                 display-lit-edges: root.help-display-lit-edges;
                 display-width: root.help-display-width;
                 display-height: root.help-display-height;
+            }
+        }
+
+    if root.section == 4: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            AppearancePage {
+                fields: root.appearance-fields;
+                mode: root.appearance-mode;
+                swatches: root.appearance-swatches;
+                wallpaper: root.appearance-wallpaper;
+                busy: root.appearance-busy;
+                dirty: root.appearance-dirty;
+                available: root.appearance-available;
+                status-text: root.appearance-status;
+                set-mode(m) => { root.appearance-set-mode(m); }
+                field-text(id, t) => { root.appearance-field-text(id, t); }
+                field-toggle(id, v) => { root.appearance-field-toggle(id, v); }
+                field-select(id, i) => { root.appearance-field-select(id, i); }
+                apply => { root.appearance-apply(); }
+                revert => { root.appearance-revert(); }
             }
         }
 

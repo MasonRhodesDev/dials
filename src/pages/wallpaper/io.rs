@@ -282,8 +282,17 @@ mod tests {
     use std::collections::BTreeMap;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard};
 
     static DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+    /// Tests that write a stub executable and run it hold this: a fork in
+    /// another test thread inherits the stub's still-open write descriptor
+    /// until it execs, and exec of a file open for writing is ETXTBSY.
+    static STUB_LOCK: Mutex<()> = Mutex::new(());
+
+    fn stub_lock() -> MutexGuard<'static, ()> {
+        STUB_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn tmp() -> PathBuf {
         let d = std::env::temp_dir().join(format!(
@@ -414,6 +423,7 @@ mod tests {
 
     #[test]
     fn job_records_exact_argv() {
+        let _serial = stub_lock();
         let dir = tmp();
         let (exe, log) = stub(&dir, "");
         let global = LmttJob {
@@ -483,6 +493,7 @@ mod tests {
 
     #[test]
     fn current_mode_parses_status() {
+        let _serial = stub_lock();
         let dir = tmp();
         let (exe, _) = stub(
             &dir,
@@ -502,6 +513,7 @@ mod tests {
 
     #[test]
     fn failures_surface_trimmed_stderr() {
+        let _serial = stub_lock();
         let dir = tmp();
         let job = LmttJob {
             set: Some((PathBuf::from("/x/a.png"), None)),

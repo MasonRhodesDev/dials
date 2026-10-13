@@ -1,7 +1,7 @@
 # dials
 
 Desktop settings for Wayland sessions, in [Slint](https://slint.dev) on
-[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, five
+[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, six
 sections:
 
 - **Displays** — canvas-first editor for
@@ -12,6 +12,10 @@ sections:
   there is no separate Apply. Each monitor tile shows its wallpaper and the
   inspector sets it (see Wallpaper).
 - **Power** — hyprstate's power policy map, sensors, and overrides.
+- **Appearance** — [lmtt](https://github.com/MasonRhodesDev/linux-multi-theme-toggle)'s
+  settings, rendered from lmtt's own config schema: dark/light mode, scheme
+  type, palette source, GTK/icon/cursor/font and editor themes per mode,
+  and the palette lmtt derived.
 - **Help** — live graph of how hyprstate derives lid/power/display state.
 - **More** — every other settings tool installed on the system, launched in
   its own window.
@@ -43,12 +47,25 @@ repaints depends on the wallpaper daemon: on hypr-DE, swaybg reads the
 registry when it starts, so it follows once hypr-DE restarts it from an
 lmtt reload module; the lock screen and greeter (vigil) follow immediately.
 
+## Appearance
+
+The page draws the same schema `lmtt-config` renders in the terminal
+(`~/.config/lmtt/config-schema.json`, refreshed by every `lmtt-config` run,
+or a packaged `lmtt/config-schema.json` under the XDG data dirs). Option
+lists come from lmtt-core's own detectors (installed GTK, icon and cursor
+themes, fonts, VS Code and Neovim themes). Dark/Light switches at once
+(`lmtt switch <mode>`); every other change waits for **Apply**, which
+writes `~/.config/lmtt/config.toml` without touching your comments and
+runs `lmtt switch` in the current mode so every module re-renders. The
+wallpaper is shown here but set in Displays.
+
 ## Pages are optional modules
 
 Each core-family integration is an in-process page module behind a cargo
 feature (`src/pages`): `displays` (monitor-profiles, hyprctl), `power` and
 `help` (hyprstate), `wallpaper` (lmtt and the appearance registry; plugs
-into Displays through the hooks in `src/pages/mod.rs`). A build without a
+into Displays through the hooks in `src/pages/mod.rs`), `appearance` (lmtt's
+settings through lmtt-core and its config schema). A build without a
 feature drops that page and its crates; a page whose tool is missing at
 run time hides its toolbar button. `cargo build --no-default-features`
 leaves only More. Third-party tools never become pages: More launches them

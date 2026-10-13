@@ -1,0 +1,171 @@
+// Appearance: lmtt's settings, rendered from lmtt's own config schema
+// (appearance page module). The wallpaper itself is set in Displays.
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitCheckBox, KitComboBox, KitLineEdit,
+    KitLabel, KitMuted, KitTitle, KitField, KitVStack, KitHStack, KitSpacer, Panel
+} from "widgets.slint";
+
+export struct SettingsField {
+    id: string,          // "<section>.<key>"
+    section: string,     // section title
+    subsection: string,
+    label: string,
+    description: string,
+    kind: string,        // enum | bool | number | path | text
+    value: string,
+    checked: bool,
+    options: [string],
+    index: int,
+    dirty: bool,
+}
+
+export struct Swatch {
+    name: string,
+    color: color,
+}
+
+export component AppearancePage inherits VerticalLayout {
+    in property <[SettingsField]> fields: [];
+    in property <string> mode: "dark";
+    in property <[Swatch]> swatches: [];
+    in property <string> wallpaper: "";
+    in property <bool> busy: false;
+    in property <bool> dirty: false;
+    in property <bool> available: false;
+    in property <string> status-text: "";
+
+    callback set-mode(string);
+    callback field-text(string, string);
+    callback field-toggle(string, bool);
+    callback field-select(string, int);
+    callback apply();
+    callback revert();
+
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitTitle { text: "Appearance"; }
+    KitMuted {
+        text: "lmtt's settings, from its own config schema. Mode switches at once; everything else is written to ~/.config/lmtt/config.toml on Apply and re-rendered with lmtt switch.";
+        wrap-text: true;
+    }
+
+    HorizontalLayout {
+        padding: 0;
+        spacing: Theme.space-xl;
+        alignment: stretch;
+
+        VerticalLayout {
+            padding: 0;
+            spacing: Theme.space-lg;
+            alignment: start;
+            horizontal-stretch: 1;
+
+            KitVStack {
+                gap: "form";
+                KitLabel { text: "Mode"; }
+                KitHStack {
+                    gap: "form";
+                    KitButton {
+                        text: "Dark";
+                        primary: root.mode == "dark";
+                        enabled: !root.busy && root.available;
+                        clicked => { root.set-mode("dark"); }
+                    }
+                    KitButton {
+                        text: "Light";
+                        primary: root.mode == "light";
+                        enabled: !root.busy && root.available;
+                        clicked => { root.set-mode("light"); }
+                    }
+                    KitMuted { text: "SUPER+T toggles this too."; }
+                }
+                KitMuted {
+                    text: root.wallpaper == "" ? "Wallpaper: not set. Set it in Displays." : "Wallpaper: " + root.wallpaper + " (set in Displays; the palette is derived from it).";
+                    wrap-text: true;
+                }
+            }
+
+            for f[i] in root.fields: VerticalLayout {
+                padding: 0;
+                spacing: Theme.space-xs;
+                if i == 0 || root.fields[i - 1].section != f.section: KitTitle {
+                    text: f.section;
+                }
+                if i == 0 || root.fields[i - 1].section != f.section || root.fields[i - 1].subsection != f.subsection: KitLabel {
+                    text: f.subsection;
+                }
+                KitField {
+                    label: f.label + (f.dirty ? " •" : "");
+                    if f.kind == "enum": KitComboBox {
+                        model: f.options;
+                        current-index: f.index;
+                        enabled: !root.busy;
+                        selected(idx) => { root.field-select(f.id, idx); }
+                    }
+                    if f.kind == "bool": KitCheckBox {
+                        text: f.checked ? "On" : "Off";
+                        checked: f.checked;
+                        enabled: !root.busy;
+                        toggled(v) => { root.field-toggle(f.id, v); }
+                    }
+                    if f.kind == "number" || f.kind == "path" || f.kind == "text": KitLineEdit {
+                        text: f.value;
+                        enabled: !root.busy;
+                        edited(t) => { root.field-text(f.id, t); }
+                    }
+                }
+                KitMuted { text: f.description; wrap-text: true; }
+            }
+
+            KitHStack {
+                gap: "form";
+                KitButton {
+                    text: "Apply";
+                    primary: true;
+                    enabled: !root.busy && root.available && root.dirty;
+                    clicked => { root.apply(); }
+                }
+                KitButton {
+                    text: "Revert";
+                    enabled: !root.busy && root.dirty;
+                    clicked => { root.revert(); }
+                }
+                KitMuted { text: "Apply writes config.toml and runs lmtt switch in the current mode: every module re-renders, a few seconds."; wrap-text: true; }
+            }
+            KitMuted { text: root.status-text; wrap-text: true; }
+        }
+
+        Panel {
+            width: 260px;
+            VerticalLayout {
+                padding: Theme.space-md;
+                spacing: Theme.space-sm;
+                alignment: start;
+                KitLabel { text: "Palette · " + root.mode; }
+                KitMuted {
+                    text: "What lmtt derived from the wallpaper. Suite apps read these as tokens; GTK, Qt and Electron apps get them through the portal and lmtt's modules.";
+                    wrap-text: true;
+                }
+                for s in root.swatches: HorizontalLayout {
+                    padding: 0;
+                    spacing: Theme.space-sm;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: Theme.radius-xs;
+                        border-width: Theme.border-width;
+                        border-color: Theme.border;
+                        background: s.color;
+                    }
+                    KitMuted { text: s.name; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+
+    KitSpacer { axis: "vertical"; }
+}

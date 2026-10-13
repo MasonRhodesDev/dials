@@ -9,6 +9,8 @@ use std::rc::Rc;
 
 use crate::{AppState, AppWindow};
 
+#[cfg(feature = "appearance")]
+pub mod appearance;
 #[cfg(feature = "displays")]
 pub mod displays;
 #[cfg(feature = "help")]
@@ -25,6 +27,8 @@ pub const DISPLAYS: i32 = 0;
 pub const POWER: i32 = 1;
 pub const HELP: i32 = 2;
 pub const MORE: i32 = 3;
+#[cfg_attr(not(feature = "appearance"), allow(dead_code))]
+pub const APPEARANCE: i32 = 4;
 
 /// Show the toolbar buttons for the pages this build has and the machine
 /// can use; returns the section to open first.
@@ -36,6 +40,7 @@ pub fn configure_toolbar(ui: &AppWindow) -> i32 {
     ui.set_page_displays(displays);
     ui.set_page_power(cfg!(feature = "power"));
     ui.set_page_help(cfg!(feature = "help"));
+    ui.set_page_appearance(cfg!(feature = "appearance"));
     if displays {
         DISPLAYS
     } else if cfg!(feature = "power") {
@@ -57,6 +62,8 @@ pub fn attach(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     help::attach(ui, state);
     #[cfg(feature = "wallpaper")]
     wallpaper::attach(ui, state);
+    #[cfg(feature = "appearance")]
+    appearance::attach(ui, state);
     more::attach(ui, state);
 }
 
@@ -72,6 +79,10 @@ pub fn enter_section(ui: &AppWindow, state: &Rc<RefCell<AppState>>, section: i32
     }
     if section == MORE {
         more::enter(ui, state);
+    }
+    #[cfg(feature = "appearance")]
+    if section == APPEARANCE {
+        appearance::enter(ui, state);
     }
 }
 
