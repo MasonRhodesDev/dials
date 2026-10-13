@@ -1,0 +1,1542 @@
+//! Displays: canvas-first editor for monitor-profiles layouts under
+//! `~/.config/hypr/profiles`, saved for hyprstate to apply. Owns everything
+//! that touches hyprctl, the profiles directory and the canvas; other pages
+//! reach it only through the hooks in `crate::pages`.
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use monitor_profiles::{
+    ConnectedOutput, Mode, Monitor, Profile, ResolvedOutput, match_in_signature, resolve, select,
+};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+
+use crate::{AppState, AppWindow, CanvasGuide, CanvasMonitor, ProfileRow};
+use profiles_io::{ListedProfile, load_merged, write_atomic};
+
+pub mod align;
+pub mod canvas;
+pub mod hyprctl;
+pub mod profiles_io;
+
+/// The page's state: live outputs, listed profiles, and the open editor.
+pub struct State {
+    pub listed: Vec<ListedProfile>,
+    pub live: Vec<hyprctl::HyprMonitor>,
+    pub connected: Vec<ConnectedOutput>,
+    pub signature: Vec<String>,
+    pub active_name: Option<String>,
+    pub editor: Option<EditorState>,
+    pub save_wait: Option<Instant>,
+    pub save_sequence: u64,
+    pub canvas_model: Rc<VecModel<CanvasMonitor>>,
+    pub canvas_w: f32,
+    pub canvas_h: f32,
+    /// Profile monitor index behind each canvas row, as last drawn.
+    pub canvas_order: Vec<usize>,
+}
+
+impl State {
+    pub fn new(ui: &AppWindow) -> Self {
+        let canvas_model = Rc::new(VecModel::from(Vec::<CanvasMonitor>::new()));
+        ui.set_canvas_monitors(ModelRc::from(canvas_model.clone()));
+        Self {
+            listed: Vec::new(),
+            live: Vec::new(),
+            connected: Vec::new(),
+            signature: Vec::new(),
+            active_name: None,
+            editor: None,
+            save_wait: None,
+            save_sequence: 0,
+            canvas_model,
+            canvas_w: 720.0,
+            canvas_h: 520.0,
+            canvas_order: Vec::new(),
+        }
+    }
+}
+
+pub struct EditorState {
+    listed: ListedProfile,
+    profile: Profile,
+    selected: usize,
+    /// Logical positions mirrored from profile resolve (mutable while editing).
+    positions: Vec<(i32, i32)>,
+    drag_origin: Option<(i32, i32)>,
+    /// Canvas-local pointer at drag start (survives tile moves).
+    drag_press_px: Option<(f32, f32)>,
+    /// Active pan/zoom transform (fit-all on open; user may zoom/pan).
+    view: canvas::CanvasView,
+    /// After user zoom/pan, resize won't auto re-fit.
+    view_custom: bool,
+    /// Middle-button / empty-space pan gesture.
+    panning: bool,
+    pan_last: Option<(f32, f32)>,
+    /// Logical snap guides (mapped to canvas in `push_canvas`).
+    active_guides: Vec<align::Guide>,
+    /// Parallel to `profile.monitors`: live outputs the loaded profile had no
+    /// entry for. Appended on open so they can be placed; cleared on save.
+    unsaved: Vec<bool>,
+}
+
+/// A canvas row's live output, when one selects it, and whether it sits at
+/// the origin. What a page decorating the tiles (wallpaper) keys on.
+#[cfg_attr(not(feature = "wallpaper"), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TileIdentity {
+    pub row: usize,
+    pub connector: String,
+    pub description: String,
+    pub origin: bool,
+}
+
+/// Hyprland present: the page can list outputs and apply profiles.
+pub fn available() -> bool {
+    crate::entries::on_path("hyprctl")
+}
+
+#[cfg_attr(not(feature = "wallpaper"), allow(dead_code))]
+fn identity_of(st: &State, monitor: usize) -> Option<(String, String)> {
+    let ed = st.editor.as_ref()?;
+    let m = ed.profile.monitors.get(monitor)?;
+    let j = st.connected.iter().position(|c| selects(&m.output, c))?;
+    let live = st.live.get(j)?;
+    Some((live.name.clone(), live.description.clone()))
+}
+
+/// Identities of the rows currently drawn on the canvas (connected only).
+#[cfg_attr(not(feature = "wallpaper"), allow(dead_code))]
+pub fn canvas_identities(st: &State) -> Vec<TileIdentity> {
+    let Some(ed) = &st.editor else {
+        return Vec::new();
+    };
+    st.canvas_order
+        .iter()
+        .enumerate()
+        .filter_map(|(row, &i)| {
+            let (connector, description) = identity_of(st, i)?;
+            let origin = ed.positions.get(i).copied() == Some((0, 0));
+            Some(TileIdentity {
+                row,
+                connector,
+                description,
+                origin,
+            })
+        })
+        .collect()
+}
+
+/// Identity of the monitor the inspector shows, when it is connected.
+#[cfg_attr(not(feature = "wallpaper"), allow(dead_code))]
+pub fn selected_identity(st: &State) -> Option<TileIdentity> {
+    let ed = st.editor.as_ref()?;
+    let i = ed.selected;
+    let (connector, description) = identity_of(st, i)?;
+    let row = st.canvas_order.iter().position(|&x| x == i)?;
+    Some(TileIdentity {
+        row,
+        connector,
+        description,
+        origin: ed.positions.get(i).copied() == Some((0, 0)),
+    })
+}
+
+/// Paint (or clear) a canvas row's background image.
+#[cfg_attr(not(feature = "wallpaper"), allow(dead_code))]
+pub fn set_tile_image(st: &State, row: usize, image: Option<slint::Image>) {
+    if let Some(mut r) = st.canvas_model.row_data(row) {
+        r.has_wallpaper = image.is_some();
+        r.wallpaper = image.unwrap_or_default();
+        st.canvas_model.set_row_data(row, r);
+    }
+}
+
+/// Bind the page's callbacks and open the current desk.
+pub fn attach(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    refresh_list(ui, state);
+    open_current_desk(ui, state);
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_profile(move |idx| {
+            let ui = ui_weak.unwrap();
+            open_editor(&ui, &state, idx as usize);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_back_to_list(move || {
+            let ui = ui_weak.unwrap();
+            state.borrow_mut().displays.editor = None;
+            ui.set_show_editor(false);
+            refresh_list(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_current_desk(move || {
+            let ui = ui_weak.unwrap();
+            refresh_list(&ui, &state);
+            open_current_desk(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_save_profile(move || {
+            let ui = ui_weak.unwrap();
+            save_editor(&ui, &state);
+            if state.borrow().displays.save_wait.is_some() {
+                let sequence = state.borrow().displays.save_sequence;
+                schedule_save_convergence(ui.as_weak(), state.clone(), sequence);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_promote_to_shared(move || {
+            let ui = ui_weak.unwrap();
+            promote_to_shared(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_rename_profile(move |name| {
+            let ui = ui_weak.unwrap();
+            rename_profile(&ui, &state, name);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_monitor(move |idx| {
+            let ui = ui_weak.unwrap();
+            select_monitor(&ui, &state, idx as usize);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_align_to_neighbor(move |op| {
+            let ui = ui_weak.unwrap();
+            align_to_neighbor(&ui, &state, op);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_set_as_origin(move || {
+            let ui = ui_weak.unwrap();
+            set_as_origin(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_insp_mode_changed(move |idx| {
+            let ui = ui_weak.unwrap();
+            set_mode(&ui, &state, idx as usize);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_insp_scale_changed(move |text| {
+            let ui = ui_weak.unwrap();
+            if let Ok(s) = text.as_str().parse::<f64>() {
+                set_scale(&ui, &state, s);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_insp_rotate_changed(move |idx| {
+            let ui = ui_weak.unwrap();
+            set_rotate(&ui, &state, idx as u8);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_insp_pos_changed(move |xs, ys| {
+            let ui = ui_weak.unwrap();
+            let Ok(x) = xs.as_str().parse::<i32>() else {
+                return;
+            };
+            let Ok(y) = ys.as_str().parse::<i32>() else {
+                return;
+            };
+            set_pos(&ui, &state, x, y);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_insp_enabled_changed(move |en| {
+            let ui = ui_weak.unwrap();
+            set_enabled(&ui, &state, en);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_drag(move |idx, dx, dy| {
+            let ui = ui_weak.unwrap();
+            drag_monitor(&ui, &state, idx as usize, dx, dy);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_drag_end(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                end_drag(&ui, &state);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_resized(move |w, h| {
+            let ui = ui_weak.unwrap();
+            {
+                let mut st = state.borrow_mut();
+                st.displays.canvas_w = w;
+                st.displays.canvas_h = h;
+            }
+            let should_fit = state
+                .borrow()
+                .displays
+                .editor
+                .as_ref()
+                .is_some_and(|e| !e.view_custom);
+            if should_fit {
+                let view = {
+                    let st = state.borrow();
+                    let outs = editor_outputs(&st.displays);
+                    canvas::fit_view(&outs, w.max(32.0), h.max(32.0))
+                };
+                if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+                    ed.view = view;
+                }
+            }
+            if state.borrow().displays.editor.is_some() {
+                push_canvas(&ui, &state);
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_zoom(move |delta_y, cx, cy| {
+            let ui = ui_weak.unwrap();
+            canvas_zoom(&ui, &state, delta_y, cx, cy);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_zoom_step(move |factor| {
+            let ui = ui_weak.unwrap();
+            let (cx, cy) = {
+                let st = state.borrow();
+                (st.displays.canvas_w * 0.5, st.displays.canvas_h * 0.5)
+            };
+            let factor = if factor > 0.0 { 1.15 } else { 1.0 / 1.15 };
+            canvas_zoom_factor(&ui, &state, factor, cx, cy);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_fit(move || {
+            let ui = ui_weak.unwrap();
+            canvas_fit(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_pan(move |dx, dy| {
+            let ui = ui_weak.unwrap();
+            canvas_pan(&ui, &state, dx, dy);
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_canvas_pan_begin(move |x, y| {
+            if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+                ed.panning = true;
+                ed.pan_last = Some((x, y));
+            }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_canvas_pan_move(move |x, y| {
+            let ui = ui_weak.unwrap();
+            let (dx, dy) = {
+                let mut st = state.borrow_mut();
+                let Some(ed) = st.displays.editor.as_mut() else {
+                    return;
+                };
+                if !ed.panning {
+                    return;
+                }
+                let (lx, ly) = ed.pan_last.unwrap_or((x, y));
+                ed.pan_last = Some((x, y));
+                (x - lx, y - ly)
+            };
+            canvas_pan(&ui, &state, dx, dy);
+        });
+    }
+    {
+        let state = state.clone();
+        ui.on_canvas_pan_end(move || {
+            if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+                ed.panning = false;
+                ed.pan_last = None;
+            }
+        });
+    }
+}
+
+fn schedule_save_convergence(
+    ui: slint::Weak<AppWindow>,
+    state: Rc<RefCell<AppState>>,
+    sequence: u64,
+) {
+    slint::Timer::single_shot(Duration::from_millis(500), move || {
+        let Some(ui_handle) = ui.upgrade() else {
+            return;
+        };
+        let mut st = state.borrow_mut();
+        if st.displays.save_sequence != sequence {
+            return;
+        }
+        let Some(started) = st.displays.save_wait else {
+            return;
+        };
+        if started.elapsed() > Duration::from_secs(8) {
+            st.displays.save_wait = None;
+            ui_handle.set_status_text("Saved; session hasn’t picked it up yet.".into());
+            return;
+        }
+        if session_matches_editor(&st.displays) {
+            st.displays.save_wait = None;
+            ui_handle.set_status_text("Session updated.".into());
+            return;
+        }
+        drop(st);
+        schedule_save_convergence(ui, state, sequence);
+    });
+}
+
+fn refresh_list(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let live = hyprctl::monitors().unwrap_or_default();
+    let connected = hyprctl::connected(&live);
+    let signature = hyprctl::signature(&live);
+    let (listed, _diags) = load_merged();
+    let profiles_only: Vec<Profile> = listed.iter().map(|l| l.profile.clone()).collect();
+    let active = select(&signature, &profiles_only).map(|p| p.name.clone());
+
+    ui.set_live_signature(hyprctl::humanize_signature(&live).into());
+
+    let rows: Vec<ProfileRow> = listed
+        .iter()
+        .map(|l| ProfileRow {
+            name: l.profile.name.clone().into(),
+            source: l.source.as_str().into(),
+            matched: profile_matches_sig(&l.profile, &signature),
+            active: active.as_deref() == Some(l.profile.name.as_str()),
+        })
+        .collect();
+
+    ui.set_profiles(ModelRc::new(VecModel::from(rows)));
+    let mut st = state.borrow_mut();
+    st.displays.listed = listed;
+    st.displays.live = live;
+    st.displays.connected = connected;
+    st.displays.signature = signature;
+    st.displays.active_name = active;
+}
+
+pub(crate) fn profile_matches_sig(profile: &Profile, signature: &[String]) -> bool {
+    !profile.matches.is_empty()
+        && profile
+            .matches
+            .iter()
+            .all(|m| match_in_signature(m, signature))
+}
+
+fn open_current_desk(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let active_idx = {
+        let st = state.borrow();
+        st.displays.active_name.as_ref().and_then(|name| {
+            st.displays
+                .listed
+                .iter()
+                .position(|l| l.profile.name.as_str() == name.as_str())
+        })
+    };
+    if let Some(idx) = active_idx {
+        open_editor(ui, state, idx);
+        return;
+    }
+    open_seeded_current_desk(ui, state);
+}
+
+fn open_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
+    let listed = {
+        let st = state.borrow();
+        st.displays.listed.get(idx).cloned()
+    };
+    let Some(listed) = listed else {
+        return;
+    };
+    let badge = {
+        let st = state.borrow();
+        if st.displays.active_name.as_deref() == Some(listed.profile.name.as_str()) {
+            "Current desk · Active"
+        } else if profile_matches_sig(&listed.profile, &st.displays.signature) {
+            "Matched to live desk"
+        } else {
+            "Historical"
+        }
+    };
+    open_listed(ui, state, listed, false, badge);
+}
+
+fn open_seeded_current_desk(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    if st.displays.live.is_empty() {
+        drop(st);
+        ui.set_status_text("No live monitors to edit.".into());
+        ui.set_show_editor(false);
+        return;
+    }
+    let name = seed_name_from_live(&st.displays.live);
+    if let Some(idx) = st
+        .displays
+        .listed
+        .iter()
+        .position(|l| l.profile.name.as_str() == name.as_str())
+    {
+        drop(st);
+        open_editor(ui, state, idx);
+        return;
+    }
+    let (profile, path, source) = seed_profile_from_live(&st.displays.live, &name);
+    let listed = ListedProfile {
+        profile,
+        source,
+        path,
+    };
+    drop(st);
+    open_listed(ui, state, listed, true, "Current desk · Unsaved");
+}
+
+fn seed_name_from_live(live: &[hyprctl::HyprMonitor]) -> String {
+    let parts: Vec<String> = live
+        .iter()
+        .map(|h| {
+            let raw = if h.description.is_empty() {
+                h.name.clone()
+            } else {
+                strip_serial_suffix(&h.description)
+            };
+            sanitize_profile_name(&raw)
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        "live-desk".into()
+    } else {
+        parts.join("-and-")
+    }
+}
+
+fn sanitize_profile_name(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in raw.chars() {
+        let ok = c.is_ascii_alphanumeric();
+        if ok {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Profile entry mirroring a live output's current mode/scale/position.
+fn monitor_from_live(h: &hyprctl::HyprMonitor) -> Monitor {
+    let output = if h.description.is_empty() {
+        h.name.clone()
+    } else {
+        let desc = strip_serial_suffix(&h.description);
+        format!("desc:{desc}")
+    };
+    Monitor {
+        output,
+        mode: Some(Mode {
+            width: h.width,
+            height: h.height,
+            refresh: h.refresh_rate.round(),
+        }),
+        scale: h.scale,
+        position: Some((h.x, h.y)),
+        transform: h.transform % 4,
+        enabled: true,
+    }
+}
+
+/// Live outputs no entry in `profile` selects — newly plugged monitors the
+/// saved profile doesn't know about yet.
+fn live_missing_from_profile<'a>(
+    profile: &Profile,
+    live: &'a [hyprctl::HyprMonitor],
+    connected: &[ConnectedOutput],
+) -> Vec<&'a hyprctl::HyprMonitor> {
+    live.iter()
+        .zip(connected.iter())
+        .filter(|(_, c)| !profile.monitors.iter().any(|m| selects(&m.output, c)))
+        .map(|(h, _)| h)
+        .collect()
+}
+
+fn seed_profile_from_live(
+    live: &[hyprctl::HyprMonitor],
+    name: &str,
+) -> (Profile, std::path::PathBuf, profiles_io::Source) {
+    let monitors: Vec<Monitor> = live.iter().map(monitor_from_live).collect();
+    let matches = monitors.iter().map(|m| m.output.clone()).collect();
+    let profile = Profile {
+        name: name.to_string(),
+        description: "Current desk (seeded from live Hyprland layout).".into(),
+        matches,
+        edp: monitor_profiles::EdpPolicy::Auto,
+        gpu: monitor_profiles::GpuPref::Auto,
+        hooks: vec![],
+        priority: monitors.len() as i64,
+        monitors,
+        workspaces: vec![],
+    };
+    let path = profiles_io::user_profile_path(name);
+    (profile, path, profiles_io::Source::User)
+}
+
+fn open_listed(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    listed: ListedProfile,
+    dirty: bool,
+    badge: &str,
+) {
+    let mut st = state.borrow_mut();
+    let resolved = resolve(&listed.profile, &st.displays.connected);
+    let mut positions: Vec<(i32, i32)> = listed
+        .profile
+        .monitors
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            m.position
+                .or_else(|| resolved.outputs.get(i).map(|o| o.position))
+                .unwrap_or((0, 0))
+        })
+        .collect();
+    let mut profile = listed.profile.clone();
+    let mut unsaved = vec![false; profile.monitors.len()];
+    let added: Vec<Monitor> =
+        live_missing_from_profile(&profile, &st.displays.live, &st.displays.connected)
+            .into_iter()
+            .map(monitor_from_live)
+            .collect();
+    for m in added {
+        positions.push(m.position.unwrap_or((0, 0)));
+        unsaved.push(true);
+        profile.monitors.push(m);
+    }
+    let added_count = unsaved.iter().filter(|u| **u).count();
+    let dirty = dirty || added_count > 0;
+
+    st.displays.editor = Some(EditorState {
+        listed: listed.clone(),
+        profile,
+        selected: 0,
+        positions,
+        unsaved,
+        drag_origin: None,
+        drag_press_px: None,
+        view: canvas::CanvasView::default(),
+        view_custom: false,
+        panning: false,
+        pan_last: None,
+        active_guides: Vec::new(),
+    });
+    drop(st);
+
+    ui.set_show_editor(true);
+    ui.set_selected_index(0);
+    ui.set_editor_name(listed.profile.name.clone().into());
+    ui.set_editor_source(listed.source.as_str().into());
+    ui.set_editor_badge(badge.into());
+    ui.set_editor_dirty(dirty);
+    ui.set_renaming_profile(false);
+    ui.set_can_promote_shared(
+        listed.source == profiles_io::Source::User && profiles_io::shared_writable(),
+    );
+    ui.set_status_text(
+        match added_count {
+            0 => String::new(),
+            1 => "1 monitor not in this profile yet — save to keep it.".to_string(),
+            n => format!("{n} monitors not in this profile yet — save to keep them."),
+        }
+        .into(),
+    );
+    ui.set_insp_match(listed.profile.matches.join("\n").into());
+
+    {
+        let view = {
+            let st = state.borrow();
+            let outs = editor_outputs(&st.displays);
+            canvas::fit_view(
+                &outs,
+                st.displays.canvas_w.max(32.0),
+                st.displays.canvas_h.max(32.0),
+            )
+        };
+        if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+            ed.view = view;
+            ed.view_custom = false;
+        }
+    }
+    push_canvas(ui, state);
+    select_monitor(ui, state, 0);
+}
+
+fn editor_outputs(ds: &State) -> Vec<(ResolvedOutput, String, bool)> {
+    let Some(ed) = &ds.editor else {
+        return Vec::new();
+    };
+    let mut profile = ed.profile.clone();
+    for (m, pos) in profile.monitors.iter_mut().zip(ed.positions.iter()) {
+        m.position = Some(*pos);
+    }
+    let resolved = resolve(&profile, &ds.connected);
+    profile
+        .monitors
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let connected = ds.connected.iter().any(|c| selects(&m.output, c));
+            let pos = ed.positions.get(i).copied().unwrap_or((0, 0));
+            // Prefer live resolve for connector name, but always paint with the
+            // editor's mode/scale/transform/position so bounds match the profile.
+            let mut out = resolved
+                .outputs
+                .iter()
+                .find(|o| o.selector == m.output)
+                .cloned()
+                .unwrap_or(ResolvedOutput {
+                    name: m.output.clone(),
+                    selector: m.output.clone(),
+                    mode: m.mode,
+                    position: pos,
+                    scale: m.scale,
+                    transform: m.transform,
+                    enabled: m.enabled,
+                });
+            out.mode = m.mode;
+            out.scale = m.scale;
+            out.transform = m.transform;
+            out.position = pos;
+            out.enabled = m.enabled;
+            let label = short_label(&m.output);
+            (out, label, !connected)
+        })
+        .collect()
+}
+
+fn selects(selector: &str, o: &ConnectedOutput) -> bool {
+    match selector.strip_prefix("desc:") {
+        Some(d) => o.description.starts_with(d.trim()),
+        None => o.name == selector,
+    }
+}
+
+fn short_label(output: &str) -> String {
+    output
+        .strip_prefix("desc:")
+        .unwrap_or(output)
+        .split_whitespace()
+        .rev()
+        .take(2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn push_canvas(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let mut st = state.borrow_mut();
+    let outs = editor_outputs(&st.displays);
+    let view = st
+        .displays
+        .editor
+        .as_ref()
+        .map(|e| e.view)
+        .unwrap_or_default();
+    let drawn = canvas::layout_drawn(&outs, view);
+    st.displays.canvas_order = drawn.iter().map(|d| d.index).collect();
+    let selected = st.displays.editor.as_ref().map(|e| e.selected).unwrap_or(0);
+    let unsaved: Vec<bool> = st
+        .displays
+        .editor
+        .as_ref()
+        .map(|e| e.unsaved.clone())
+        .unwrap_or_default();
+    let model = st.displays.canvas_model.clone();
+    let zoom_pct = (view.scale * 100.0).round() as i32;
+    let rows: Vec<CanvasMonitor> = drawn
+        .into_iter()
+        .map(|d| CanvasMonitor {
+            label: d.label.into(),
+            x: d.x,
+            y: d.y,
+            w: d.w,
+            h: d.h,
+            selected: d.index == selected,
+            ghost: d.ghost,
+            origin: d.origin,
+            unsaved: unsaved.get(d.index).copied().unwrap_or(false),
+            wallpaper: slint::Image::default(),
+            has_wallpaper: false,
+        })
+        .collect();
+
+    if model.row_count() == rows.len() {
+        for (i, row) in rows.into_iter().enumerate() {
+            model.set_row_data(i, row);
+        }
+    } else {
+        model.set_vec(rows);
+    }
+    ui.set_canvas_zoom_label(format!("{zoom_pct}%").into());
+
+    let guides = st
+        .displays
+        .editor
+        .as_ref()
+        .map(|e| e.active_guides.clone())
+        .unwrap_or_default();
+    let guide_rows: Vec<CanvasGuide> = guides
+        .iter()
+        .map(|g| match *g {
+            align::Guide::Vertical(lx) => CanvasGuide {
+                vertical: true,
+                pos: canvas::map_x(&view, lx),
+            },
+            align::Guide::Horizontal(ly) => CanvasGuide {
+                vertical: false,
+                pos: canvas::map_y(&view, ly),
+            },
+        })
+        .collect();
+    ui.set_canvas_guides(ModelRc::new(VecModel::from(guide_rows)));
+
+    let warnings: Vec<String> = {
+        let Some(ed) = &st.displays.editor else {
+            ui.set_warnings("".into());
+            return;
+        };
+        let mut profile = ed.profile.clone();
+        for (m, pos) in profile.monitors.iter_mut().zip(ed.positions.iter()) {
+            m.position = Some(*pos);
+        }
+        let r = resolve(&profile, &st.displays.connected);
+        let mut w = r.warnings;
+        for u in r.unmatched {
+            w.push(format!("no output for {u}"));
+        }
+        for m in &ed.profile.monitors {
+            if let Some(mode) = m.mode {
+                let snapped = monitor_profiles::valid_scale(mode.width, mode.height, m.scale);
+                if (snapped - m.scale).abs() > 0.001 {
+                    w.push(format!(
+                        "{}: scale {} snaps to {snapped}",
+                        short_label(&m.output),
+                        m.scale
+                    ));
+                }
+            }
+        }
+        w
+    };
+    ui.set_warnings(warnings.join(" · ").into());
+    drop(st);
+    crate::pages::canvas_updated(ui, state);
+}
+
+fn canvas_zoom(ui: &AppWindow, state: &Rc<RefCell<AppState>>, delta_y: f32, cx: f32, cy: f32) {
+    canvas_zoom_factor(ui, state, canvas::zoom_factor_from_wheel(delta_y), cx, cy);
+}
+
+fn canvas_zoom_factor(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    factor: f32,
+    cx: f32,
+    cy: f32,
+) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.view = canvas::zoom_at(ed.view, factor, cx, cy);
+        ed.view_custom = true;
+    }
+    push_canvas(ui, state);
+}
+
+fn canvas_fit(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let view = {
+        let st = state.borrow();
+        let outs = editor_outputs(&st.displays);
+        canvas::fit_view(
+            &outs,
+            st.displays.canvas_w.max(32.0),
+            st.displays.canvas_h.max(32.0),
+        )
+    };
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.view = view;
+        ed.view_custom = false;
+    }
+    push_canvas(ui, state);
+}
+
+fn canvas_pan(ui: &AppWindow, state: &Rc<RefCell<AppState>>, dx: f32, dy: f32) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.view = canvas::pan(ed.view, dx, dy);
+        ed.view_custom = true;
+    }
+    push_canvas(ui, state);
+}
+
+fn select_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize) {
+    {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        if idx >= ed.profile.monitors.len() {
+            return;
+        }
+        if ed.selected != idx {
+            ed.selected = idx;
+            ed.drag_origin = None;
+            ed.drag_press_px = None;
+        }
+    }
+    ui.set_selected_index(idx as i32);
+    push_canvas(ui, state);
+    push_inspector(ui, state);
+}
+
+fn end_drag(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+        ed.active_guides.clear();
+    }
+    push_canvas(ui, state);
+}
+
+fn drag_monitor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, idx: usize, cx: f32, cy: f32) {
+    let snap_edges = ui.get_helper_snap_edges();
+    let snap_centers = ui.get_helper_snap_centers();
+    {
+        let mut st = state.borrow_mut();
+        if st
+            .displays
+            .editor
+            .as_ref()
+            .is_none_or(|e| idx >= e.positions.len())
+        {
+            return;
+        }
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        ed.selected = idx;
+        if ed.drag_origin.is_none() {
+            ed.drag_origin = Some(ed.positions[idx]);
+            ed.drag_press_px = Some((cx, cy));
+        }
+        let origin = ed.drag_origin.unwrap();
+        let (px, py) = ed.drag_press_px.unwrap_or((cx, cy));
+        let scale = ed.view.scale.max(0.01);
+        let mut pos = (
+            origin.0 + ((cx - px) / scale) as i32,
+            origin.1 + ((cy - py) / scale) as i32,
+        );
+
+        ed.active_guides.clear();
+        if snap_edges || snap_centers {
+            let rects: Vec<align::Rect> = ed
+                .profile
+                .monitors
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let (x, y) = if i == idx {
+                        pos
+                    } else {
+                        ed.positions.get(i).copied().unwrap_or((0, 0))
+                    };
+                    let ro = ResolvedOutput {
+                        name: String::new(),
+                        selector: String::new(),
+                        mode: m.mode,
+                        position: (x, y),
+                        scale: m.scale,
+                        transform: m.transform,
+                        enabled: true,
+                    };
+                    let (w, h) = canvas::logical_size(&ro);
+                    align::Rect { x, y, w, h }
+                })
+                .collect();
+            let moving = rects[idx];
+            let others: Vec<align::Rect> = rects
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, r)| *r)
+                .collect();
+            let snapped = align::snap_position(
+                moving,
+                &others,
+                align::SnapOpts {
+                    edges: snap_edges,
+                    centers: snap_centers,
+                    threshold: 32,
+                },
+            );
+            pos = (snapped.x, snapped.y);
+            ed.active_guides = snapped.guides;
+        }
+
+        ed.positions[idx] = pos;
+    }
+    ui.set_selected_index(idx as i32);
+    ui.set_editor_dirty(true);
+    push_canvas(ui, state);
+    let st = state.borrow();
+    if let Some(ed) = &st.displays.editor {
+        let (x, y) = ed.positions[ed.selected];
+        ui.set_insp_pos_x(x.to_string().into());
+        ui.set_insp_pos_y(y.to_string().into());
+        ui.set_insp_is_origin(x == 0 && y == 0);
+    }
+    drop(st);
+    crate::pages::selection_changed(ui, state);
+}
+
+fn push_inspector(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let Some(ed) = &st.displays.editor else {
+        return;
+    };
+    let i = ed.selected;
+    let m = &ed.profile.monitors[i];
+    let (x, y) = ed.positions[i];
+    ui.set_insp_label(short_label(&m.output).into());
+    ui.set_insp_scale(format!("{}", m.scale).into());
+    if let Some(mode) = m.mode {
+        let snapped = monitor_profiles::valid_scale(mode.width, mode.height, m.scale);
+        if (snapped - m.scale).abs() > 0.001 {
+            ui.set_insp_snap(format!("snaps to {snapped}").into());
+        } else {
+            ui.set_insp_snap("".into());
+        }
+    } else {
+        ui.set_insp_snap("".into());
+    }
+    ui.set_insp_rotate_index(i32::from(m.transform.min(3)));
+    ui.set_insp_pos_x(x.to_string().into());
+    ui.set_insp_pos_y(y.to_string().into());
+    ui.set_insp_is_origin(x == 0 && y == 0);
+    ui.set_insp_enabled(m.enabled);
+    ui.set_insp_unsaved(ed.unsaved.get(i).copied().unwrap_or(false));
+
+    let mut modes = modes_for(&st.displays.live, &m.output);
+    let current = m.mode.map(|md| md.to_string()).unwrap_or_default();
+    if !current.is_empty() && !modes.iter().any(|t| mode_strings_match(t, &current)) {
+        modes.insert(0, current.clone());
+    }
+    let idx = modes
+        .iter()
+        .position(|t| mode_strings_match(t, &current))
+        .unwrap_or(0);
+    if modes.is_empty() {
+        let fallback = if current.is_empty() {
+            "preferred".to_string()
+        } else {
+            current
+        };
+        ui.set_insp_modes(ModelRc::new(VecModel::from(vec![SharedString::from(
+            fallback,
+        )])));
+        ui.set_insp_mode_index(0);
+    } else {
+        ui.set_insp_modes(ModelRc::new(VecModel::from(
+            modes
+                .iter()
+                .map(|t| SharedString::from(t.as_str()))
+                .collect::<Vec<_>>(),
+        )));
+        ui.set_insp_mode_index(idx as i32);
+    }
+    drop(st);
+    crate::pages::selection_changed(ui, state);
+}
+
+fn modes_for(live: &[hyprctl::HyprMonitor], selector: &str) -> Vec<String> {
+    let desc = selector.strip_prefix("desc:").unwrap_or(selector);
+    live.iter()
+        .find(|m| m.name == selector || m.description.starts_with(desc))
+        .map(|m| {
+            let mut v = m.available_modes.clone();
+            v.sort_by(|a, b| mode_sort_key(b).cmp(&mode_sort_key(a)));
+            v.dedup();
+            v
+        })
+        .unwrap_or_default()
+}
+
+/// Prefer larger modes first (area, then refresh) — not lexicographic "1024…" first.
+fn mode_sort_key(s: &str) -> (u64, u64) {
+    let (w, h, hz) = parse_mode_parts(s);
+    (w.saturating_mul(h), hz)
+}
+
+fn parse_mode_parts(s: &str) -> (u64, u64, u64) {
+    let s = s.trim().trim_end_matches("Hz");
+    let Some((wh, rest)) = s.split_once('x') else {
+        return (0, 0, 0);
+    };
+    let w = wh.parse().unwrap_or(0);
+    let (h_str, hz_str) = rest
+        .split_once('@')
+        .map(|(h, hz)| (h, hz))
+        .unwrap_or((rest, "0"));
+    let h = h_str.parse().unwrap_or(0);
+    let hz = hz_str.parse::<f64>().map(|f| f.round() as u64).unwrap_or(0);
+    (w, h, hz)
+}
+
+fn mode_strings_match(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (aw, ah, az) = parse_mode_parts(a);
+    let (bw, bh, bz) = parse_mode_parts(b);
+    aw == bw && ah == bh && aw > 0 && (az == bz || az.abs_diff(bz) <= 1)
+}
+
+fn mark_dirty(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
+            m.position = Some(*pos);
+        }
+    }
+    ui.set_editor_dirty(true);
+    push_canvas(ui, state);
+    push_inspector(ui, state);
+}
+
+fn set_mode(ui: &AppWindow, state: &Rc<RefCell<AppState>>, mode_idx: usize) {
+    let modes = {
+        let st = state.borrow();
+        let Some(ed) = &st.displays.editor else {
+            return;
+        };
+        modes_for(&st.displays.live, &ed.profile.monitors[ed.selected].output)
+    };
+    let text = modes.get(mode_idx).cloned().unwrap_or_default();
+    // Hyprland modes look like 3840x2160@60.00Hz — strip Hz for Mode::parse
+    let cleaned = text.replace("Hz", "");
+    if let Some(mode) = Mode::parse(&cleaned) {
+        let mut st = state.borrow_mut();
+        if let Some(ed) = st.displays.editor.as_mut() {
+            ed.profile.monitors[ed.selected].mode = Some(mode);
+        }
+    }
+    mark_dirty(ui, state);
+}
+
+fn set_scale(ui: &AppWindow, state: &Rc<RefCell<AppState>>, scale: f64) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.profile.monitors[ed.selected].scale = scale.max(0.1);
+    }
+    mark_dirty(ui, state);
+}
+
+fn set_rotate(ui: &AppWindow, state: &Rc<RefCell<AppState>>, t: u8) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.profile.monitors[ed.selected].transform = t.min(3);
+    }
+    mark_dirty(ui, state);
+}
+
+fn set_pos(ui: &AppWindow, state: &Rc<RefCell<AppState>>, x: i32, y: i32) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        let i = ed.selected;
+        ed.positions[i] = (x, y);
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+    }
+    mark_dirty(ui, state);
+}
+
+fn set_enabled(ui: &AppWindow, state: &Rc<RefCell<AppState>>, en: bool) {
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.profile.monitors[ed.selected].enabled = en;
+    }
+    mark_dirty(ui, state);
+}
+
+fn set_as_origin(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        let i = ed.selected;
+        let (ox, oy) = ed.positions[i];
+        if ox == 0 && oy == 0 {
+            return;
+        }
+        for pos in &mut ed.positions {
+            pos.0 -= ox;
+            pos.1 -= oy;
+        }
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+    }
+    mark_dirty(ui, state);
+}
+
+fn align_to_neighbor(ui: &AppWindow, state: &Rc<RefCell<AppState>>, op: i32) {
+    let Some(op) = align::AlignOp::from_i32(op) else {
+        return;
+    };
+    {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        if ed.profile.monitors.len() < 2 {
+            return;
+        }
+        let i = ed.selected;
+        let rects: Vec<align::Rect> = ed
+            .profile
+            .monitors
+            .iter()
+            .enumerate()
+            .map(|(j, m)| {
+                let (x, y) = ed.positions.get(j).copied().unwrap_or((0, 0));
+                let ro = ResolvedOutput {
+                    name: String::new(),
+                    selector: String::new(),
+                    mode: m.mode,
+                    position: (x, y),
+                    scale: m.scale,
+                    transform: m.transform,
+                    enabled: true,
+                };
+                let (w, h) = canvas::logical_size(&ro);
+                align::Rect { x, y, w, h }
+            })
+            .collect();
+        let Some(j) = align::nearest_neighbor(i, &rects) else {
+            return;
+        };
+        ed.positions[i] = align::apply_align(op, rects[i], rects[j]);
+        ed.active_guides = op.guides(rects[j]);
+        ed.drag_origin = None;
+        ed.drag_press_px = None;
+    }
+    mark_dirty(ui, state);
+}
+
+fn rename_profile(ui: &AppWindow, state: &Rc<RefCell<AppState>>, raw: SharedString) {
+    let name = raw.trim().to_string();
+    if name.is_empty() {
+        ui.set_status_text("Name cannot be empty.".into());
+        if let Some(ed) = state.borrow().displays.editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        ui.set_status_text("Name cannot contain path separators.".into());
+        if let Some(ed) = state.borrow().displays.editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    let stem = sanitize_profile_name(&name);
+    if stem.is_empty() {
+        ui.set_status_text("Name needs letters or numbers.".into());
+        if let Some(ed) = state.borrow().displays.editor.as_ref() {
+            ui.set_editor_name(ed.profile.name.clone().into());
+        }
+        return;
+    }
+    {
+        let st = state.borrow();
+        let Some(ed) = st.displays.editor.as_ref() else {
+            return;
+        };
+        if ed.profile.name == name {
+            return;
+        }
+        let conflict =
+            st.displays.listed.iter().any(|l| {
+                sanitize_profile_name(&l.profile.name) == stem && l.path != ed.listed.path
+            });
+        if conflict {
+            drop(st);
+            ui.set_status_text(format!("Profile “{stem}” already exists.").into());
+            if let Some(ed) = state.borrow().displays.editor.as_ref() {
+                ui.set_editor_name(ed.profile.name.clone().into());
+            }
+            return;
+        }
+    }
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.profile.name = name.clone();
+    }
+    ui.set_editor_name(name.into());
+    mark_dirty(ui, state);
+}
+
+fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let old_path;
+    let path;
+    let profile;
+    let wrote_user_override;
+    {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
+            m.position = Some(*pos);
+        }
+        let stem = sanitize_profile_name(&ed.profile.name);
+        if stem.is_empty() {
+            drop(st);
+            ui.set_status_text("Name needs letters or numbers.".into());
+            return;
+        }
+        ed.profile.name = stem.clone();
+        old_path = ed.listed.path.clone();
+        // Shared: write in place when writable, else fall back to user (no perms fight).
+        let (dest, user_override) = match ed.listed.source {
+            profiles_io::Source::User => (profiles_io::user_profile_path(&stem), false),
+            profiles_io::Source::Shared => {
+                if profiles_io::shared_writable() {
+                    (profiles_io::shared_profile_path(&stem), false)
+                } else {
+                    (profiles_io::user_profile_path(&stem), true)
+                }
+            }
+        };
+        path = dest;
+        profile = ed.profile.clone();
+        wrote_user_override = user_override;
+    }
+    match write_atomic(&path, &profile) {
+        Ok(()) => {
+            if old_path != path {
+                let _ = profiles_io::remove_file(&old_path);
+            }
+            ui.set_editor_dirty(false);
+            ui.set_editor_name(profile.name.clone().into());
+            ui.set_status_text("Waiting for session…".into());
+            {
+                let mut st = state.borrow_mut();
+                st.displays.save_wait = Some(Instant::now());
+                st.displays.save_sequence = st.displays.save_sequence.wrapping_add(1);
+            }
+            if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+                ed.listed.profile = profile;
+                ed.listed.path = path.clone();
+                ed.unsaved.iter_mut().for_each(|u| *u = false);
+                if wrote_user_override {
+                    ed.listed.source = profiles_io::Source::User;
+                    ui.set_editor_source("user".into());
+                    ui.set_can_promote_shared(profiles_io::shared_writable());
+                }
+            }
+            let name = state
+                .borrow()
+                .displays
+                .editor
+                .as_ref()
+                .map(|e| e.profile.name.clone());
+            refresh_list(ui, state);
+            if let Some(name) = name {
+                if state.borrow().displays.active_name.as_deref() == Some(name.as_str()) {
+                    ui.set_editor_badge("Current desk · Active".into());
+                } else {
+                    ui.set_editor_badge("Current desk".into());
+                }
+            }
+        }
+        Err(e) => ui.set_status_text(format!("Save failed: {e}").into()),
+    }
+}
+
+fn promote_to_shared(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    if !profiles_io::shared_writable() {
+        ui.set_status_text("No write access to shared profiles.".into());
+        return;
+    }
+    let (user_path, shared_path, profile) = {
+        let mut st = state.borrow_mut();
+        let Some(ed) = st.displays.editor.as_mut() else {
+            return;
+        };
+        if ed.listed.source != profiles_io::Source::User {
+            return;
+        }
+        for (m, pos) in ed.profile.monitors.iter_mut().zip(ed.positions.iter()) {
+            m.position = Some(*pos);
+        }
+        (
+            ed.listed.path.clone(),
+            profiles_io::shared_profile_path(&ed.profile.name),
+            ed.profile.clone(),
+        )
+    };
+    if let Err(e) = write_atomic(&shared_path, &profile) {
+        ui.set_status_text(format!("Promote failed: {e}").into());
+        return;
+    }
+    if let Err(e) = profiles_io::remove_file(&user_path) {
+        ui.set_status_text(format!("Wrote shared, but could not remove user copy: {e}").into());
+    }
+    if let Some(ed) = state.borrow_mut().displays.editor.as_mut() {
+        ed.listed.profile = profile;
+        ed.listed.path = shared_path;
+        ed.listed.source = profiles_io::Source::Shared;
+    }
+    ui.set_editor_source("shared".into());
+    ui.set_can_promote_shared(false);
+    ui.set_editor_dirty(false);
+    ui.set_status_text("Promoted to shared.".into());
+    refresh_list(ui, state);
+}
+
+fn session_matches_editor(ds: &State) -> bool {
+    let Some(ed) = &ds.editor else {
+        return false;
+    };
+    let Ok(live) = hyprctl::monitors() else {
+        return false;
+    };
+    for (m, pos) in ed.profile.monitors.iter().zip(ed.positions.iter()) {
+        let desc = m.output.strip_prefix("desc:").unwrap_or(&m.output);
+        let Some(hm) = live
+            .iter()
+            .find(|h| h.name == m.output || h.description.starts_with(desc))
+        else {
+            continue;
+        };
+        if hm.x != pos.0 || hm.y != pos.1 {
+            return false;
+        }
+    }
+    true
+}
+
+fn strip_serial_suffix(desc: &str) -> String {
+    let parts: Vec<&str> = desc.split_whitespace().collect();
+    if parts.len() >= 2 {
+        let last = parts[parts.len() - 1];
+        // Heuristic: serial-like tokens are long alnum without spaces
+        if last.len() >= 5 && last.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return parts[..parts.len() - 1].join(" ");
+        }
+    }
+    desc.to_string()
+}
+
+#[cfg(test)]
+mod unsaved_monitor_tests {
+    use super::*;
+
+    fn live(name: &str, desc: &str, x: i32) -> hyprctl::HyprMonitor {
+        hyprctl::HyprMonitor {
+            name: name.into(),
+            description: desc.into(),
+            x,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            transform: 0,
+            scale: 1.0,
+            available_modes: vec![],
+            refresh_rate: 60.0,
+        }
+    }
+
+    #[test]
+    fn newly_plugged_outputs_are_reported_and_seeded_from_live() {
+        let live = vec![
+            live("DP-1", "Dell U2720Q ABC12345", 0),
+            live("HDMI-A-1", "LG HDR 4K 0x0001", 1920),
+        ];
+        let connected = hyprctl::connected(&live);
+        let profile = Profile {
+            monitors: vec![Monitor {
+                output: "desc:Dell U2720Q".into(),
+                mode: None,
+                scale: 1.0,
+                position: None,
+                transform: 0,
+                enabled: true,
+            }],
+            ..seed_profile_from_live(&[], "x").0
+        };
+        let missing = live_missing_from_profile(&profile, &live, &connected);
+        assert_eq!(missing.len(), 1);
+        let m = monitor_from_live(missing[0]);
+        assert_eq!(m.output, "desc:LG HDR 4K");
+        assert_eq!(m.position, Some((1920, 0)));
+        assert_eq!(m.mode.map(|md| md.width), Some(1920));
+
+        // Once the entry exists, nothing is missing.
+        let mut full = profile.clone();
+        full.monitors.push(m);
+        assert!(live_missing_from_profile(&full, &live, &connected).is_empty());
+    }
+}

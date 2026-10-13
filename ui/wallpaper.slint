@@ -1,0 +1,86 @@
+// Wallpaper field for the Displays inspector (wallpaper page module).
+// The origin display shows only the selector: choosing sets the global
+// wallpaper. Any other display shows an Override checkbox; ticked, it
+// reveals the selector for that display's own image.
+import { Theme } from "theme.slint";
+import { KitButton, KitCheckBox, KitLabel, KitMuted } from "widgets.slint";
+
+export component WallpaperField inherits VerticalLayout {
+    in property <bool> is-origin: false;
+    in-out property <bool> override-on: false;
+    in property <bool> has-image: false;
+    in property <image> image;
+    in property <string> name: "";
+    in property <string> path: "";
+    in property <string> note: "";
+    in property <bool> busy: false;
+    in property <bool> can-apply: false;
+    in property <string> status: "";
+
+    callback choose();
+    callback override-changed(bool);
+
+    padding: 0;
+    spacing: Theme.space-sm;
+
+    KitLabel { text: "Wallpaper"; }
+
+    if !root.is-origin: KitCheckBox {
+        text: "Override the global wallpaper";
+        checked <=> root.override-on;
+        enabled: !root.busy && root.can-apply;
+        toggled(on) => { root.override-changed(on); }
+    }
+    if !root.is-origin && !root.override-on: KitMuted {
+        text: root.note;
+        wrap-text: true;
+    }
+
+    if root.is-origin || root.override-on: VerticalLayout {
+        padding: 0;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            padding: 0;
+            spacing: Theme.space-sm;
+            Rectangle {
+                width: 96px;
+                height: 54px;
+                border-radius: Theme.radius-xs;
+                background: Theme.tile-bg;
+                border-width: Theme.border-width;
+                border-color: Theme.border;
+                clip: true;
+                if root.has-image: Image {
+                    source: root.image;
+                    image-fit: cover;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            VerticalLayout {
+                padding: 0;
+                spacing: 2px;
+                alignment: center;
+                KitLabel { text: root.name == "" ? "Not set" : root.name; }
+                KitMuted { text: root.path; wrap-text: true; }
+            }
+        }
+        KitMuted { text: root.note; wrap-text: true; }
+        HorizontalLayout {
+            padding: 0;
+            spacing: Theme.space-sm;
+            alignment: start;
+            KitButton {
+                text: "Choose…";
+                enabled: !root.busy && root.can-apply;
+                clicked => { root.choose(); }
+            }
+        }
+    }
+
+    if root.status != "": KitMuted {
+        text: root.status;
+        wrap-text: true;
+    }
+}

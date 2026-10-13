@@ -29,13 +29,17 @@ BuildRequires:  libstdc++-devel
 Requires:       mesa-libGL
 Requires:       fontconfig
 Recommends:     hyprstate
+# Wallpaper field in Displays: runs `lmtt wallpaper` / `lmtt switch`.
+Recommends:     lmtt
 
 %description
 Slint desktop settings application. Displays and Power edit hyprstate's
 monitor-profile layouts and power policy map and show how lid/power/profile
-state is derived; More lists every other installed settings tool from its
-XDG desktop entry (Categories=Settings; or X-Dials-Section=) and launches
-it. Configuration lives in ~/.config/hypr and is not part of this package.
+state is derived; Displays also shows and sets each monitor's wallpaper
+through lmtt and the appearance-profiles registry; More lists every other
+installed settings tool from its XDG desktop entry (Categories=Settings; or
+X-Dials-Section=) and launches it. Configuration lives in ~/.config/hypr and
+~/.config/appearance-profiles and is not part of this package.
 
 %prep
 # -a1 unpacks the vendor tarball (vendor/ at its root) into the source dir.

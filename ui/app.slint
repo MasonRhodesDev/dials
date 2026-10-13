@@ -13,6 +13,7 @@ import {
 import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { PowerPage } from "power.slint";
 import { HelpPage, HelpNode, HelpEdge } from "help.slint";
+import { WallpaperField } from "wallpaper.slint";
 
 export { Theme, Palette, HelpNode, HelpEdge }
 
@@ -41,6 +42,9 @@ export struct CanvasMonitor {
     origin: bool,
     /// Live output the loaded profile has no entry for (kept only on save).
     unsaved: bool,
+    /// Background the output resolves to (wallpaper page), when decoded.
+    wallpaper: image,
+    has-wallpaper: bool,
 }
 
 /// Active snap guide (only present while snapped). `vertical` → line at x=`pos`.
@@ -140,6 +144,22 @@ export component AppWindow inherits Window {
     in-out property <string> help-lid-now: "";
     in-out property <string> help-power-now: "";
     in-out property <string> help-display-now: "";
+    // Which pages this build has and the machine can use (toolbar buttons).
+    in-out property <bool> page-displays: true;
+    in-out property <bool> page-power: true;
+    in-out property <bool> page-help: true;
+    // Wallpaper field in the Displays inspector (wallpaper page module).
+    in-out property <bool> wallpaper-enabled: false;
+    in-out property <bool> wallpaper-is-origin: false;
+    in-out property <bool> wallpaper-override: false;
+    in-out property <bool> wallpaper-has-image: false;
+    in-out property <image> wallpaper-image;
+    in-out property <string> wallpaper-name: "";
+    in-out property <string> wallpaper-path: "";
+    in-out property <string> wallpaper-note: "";
+    in-out property <bool> wallpaper-busy: false;
+    in-out property <bool> wallpaper-can-apply: false;
+    in-out property <string> wallpaper-status: "";
 
     callback open-profile(int);
     callback open-current-desk();
@@ -176,6 +196,12 @@ export component AppWindow inherits Window {
     callback section-changed(int);
     callback telemetry-wake();
     callback launch-entry(int);
+    callback wallpaper-choose();
+    callback wallpaper-override-changed(bool);
+    // Invoked from worker threads via upgrade_in_event_loop (like telemetry-wake).
+    callback wallpaper-picked(string, string);
+    callback wallpaper-job-done(int, bool, string);
+    callback wallpaper-decoded(string, image);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -190,7 +216,7 @@ export component AppWindow inherits Window {
             spacing: Theme.space-md;
 
             KitToolbar {
-                KitButton {
+                if root.page-displays: KitButton {
                     text: "Displays";
                     primary: root.section == 0;
                     clicked => {
@@ -198,7 +224,7 @@ export component AppWindow inherits Window {
                         root.section-changed(0);
                     }
                 }
-                KitButton {
+                if root.page-power: KitButton {
                     text: "Power";
                     primary: root.section == 1;
                     clicked => {
@@ -206,7 +232,7 @@ export component AppWindow inherits Window {
                         root.section-changed(1);
                     }
                 }
-                KitButton {
+                if root.page-help: KitButton {
                     text: "Help";
                     primary: root.section == 2;
                     clicked => {
@@ -426,6 +452,19 @@ export component AppWindow inherits Window {
                     border-color: m.unsaved
                         ? Theme.warning-fg
                         : (m.selected ? Theme.accent : Theme.border);
+                    clip: true;
+
+                    if m.has-wallpaper: Image {
+                        source: m.wallpaper;
+                        image-fit: cover;
+                        width: parent.width;
+                        height: parent.height;
+                        opacity: m.ghost ? Theme.ghost-alpha : 1;
+                    }
+                    // Keeps the label readable over a wallpaper.
+                    if m.has-wallpaper: Rectangle {
+                        background: Theme.canvas-bg.with-alpha(0.35);
+                    }
 
                     Text {
                         text: m.label + (m.origin ? " ★" : "") + (m.unsaved ? "\nnot saved" : "");
@@ -606,6 +645,21 @@ export component AppWindow inherits Window {
                             text: "Enabled";
                             checked: root.insp-enabled;
                             toggled(v) => { root.insp-enabled-changed(v); }
+                        }
+
+                        if root.wallpaper-enabled: WallpaperField {
+                            is-origin: root.wallpaper-is-origin;
+                            override-on <=> root.wallpaper-override;
+                            has-image: root.wallpaper-has-image;
+                            image: root.wallpaper-image;
+                            name: root.wallpaper-name;
+                            path: root.wallpaper-path;
+                            note: root.wallpaper-note;
+                            busy: root.wallpaper-busy;
+                            can-apply: root.wallpaper-can-apply;
+                            status: root.wallpaper-status;
+                            choose => { root.wallpaper-choose(); }
+                            override-changed(on) => { root.wallpaper-override-changed(on); }
                         }
 
                         KitDisclosure {

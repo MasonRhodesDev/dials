@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use hyprstate_fsm::power::{PowerPolicy, parse_power_policy};
 use hyprstate_fsm::profiles::parse_directive;
 
-use crate::sensors::hypr_dir;
+use super::sensors::hypr_dir;
 
 pub fn power_conf_path() -> PathBuf {
     hypr_dir().join("power.conf")

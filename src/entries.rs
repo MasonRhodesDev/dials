@@ -253,7 +253,7 @@ const KNOWN_TERMINALS: &[(&str, &[&str])] = &[
 ];
 
 /// Absolute path, or found in `$PATH`.
-fn on_path(exe: &str) -> bool {
+pub(crate) fn on_path(exe: &str) -> bool {
     if exe.contains('/') {
         return Path::new(exe).is_file();
     }

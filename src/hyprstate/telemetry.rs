@@ -131,6 +131,7 @@ fn connect_loop(path: PathBuf, on_frame: impl Fn(HelpLive) -> bool) {
 }
 
 /// Build match-row lighting from daemon active_profile + local match list.
+#[cfg_attr(not(feature = "help"), allow(dead_code))]
 pub fn display_rows(
     matches: &[(String, String, String, bool)],
     active_profile: &str,
