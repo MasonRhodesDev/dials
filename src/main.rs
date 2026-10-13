@@ -1,6 +1,9 @@
 //! dials — desktop settings. Displays and power pages edit hyprstate
-//! intent; the More page launches other settings tools from their XDG
-//! desktop entries (see `entries`).
+//! intent; System writes machine settings through systemd (see
+//! `admin_pages`); the More page launches other settings tools from their
+//! XDG desktop entries (see `entries`).
+mod admin;
+mod admin_pages;
 mod align;
 mod canvas;
 mod entries;
@@ -9,6 +12,7 @@ mod hyprctl;
 mod power_io;
 mod profiles_io;
 mod sensors;
+mod system;
 mod telemetry;
 
 use std::cell::RefCell;
@@ -81,9 +85,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
         None => {}
         Some("--entries") => return print_entries(),
+        Some("--system") => return print_system(),
         Some("--help" | "-h") => {
             println!(
-                "usage: dials [--entries]\n  --entries  list the settings tools the More page would show, then exit"
+                "usage: dials [--entries | --system]\n  --entries  list the settings tools the More page would show, then exit\n  --system   print what the System page reads from systemd, then exit"
             );
             return Ok(());
         }
@@ -432,11 +437,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_override(&ui, &state, "cycle");
         });
     }
+    let admin_pages = admin_pages::AdminPages::attach(&ui);
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.on_section_changed(move |section| {
             let ui = ui_weak.unwrap();
+            admin_pages.section_shown(section);
             if section == 1 {
                 refresh_power(&ui, &state);
             }
@@ -2045,6 +2052,24 @@ fn print_entries() -> Result<(), Box<dyn std::error::Error>> {
     for e in scan_entries()? {
         println!("{}\t{}\t{}\t{}", e.section, e.id, e.name, e.argv.join(" "));
     }
+    Ok(())
+}
+
+/// `dials --system`: the System page's reads, without the UI.
+fn print_system() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::blocking::Connection::system()?;
+    let (snap, errors) = system::read(&conn);
+    println!("{snap:#?}");
+    for e in errors {
+        eprintln!("{e}");
+    }
+    let lists = system::read_lists(&conn);
+    println!(
+        "lists: {} time zones, {} locales, {} layouts",
+        lists.timezones.len(),
+        lists.locales.len(),
+        lists.layouts.len()
+    );
     Ok(())
 }
 

@@ -1,0 +1,164 @@
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitCheckBox, KitLineEdit,
+    KitMuted, KitTitle, KitLabel, KitField, KitListRow,
+    KitVStack, KitHStack, KitSpacer
+} from "widgets.slint";
+
+/// Search box + up to a handful of matches; picking one applies it.
+component Picker inherits KitVStack {
+    in property <string> label;
+    in property <string> current;
+    in property <string> placeholder;
+    in property <[string]> matches;
+    in-out property <string> query;
+    callback query-changed(string);
+    callback picked(int);
+
+    gap: "tight";
+    KitField {
+        label: root.label + (root.current != "" ? " · " + root.current : "");
+        KitLineEdit {
+            text <=> root.query;
+            placeholder: root.placeholder;
+            edited(t) => { root.query-changed(t); }
+            accepted => { if root.matches.length > 0 { root.picked(0); } }
+        }
+    }
+    for m[i] in root.matches: KitListRow {
+        title: m;
+        active: m == root.current;
+        clicked => { root.picked(i); }
+    }
+}
+
+export component SystemPage inherits VerticalLayout {
+    in property <string> static-hostname;
+    in property <string> pretty-hostname;
+    in-out property <string> hostname-draft;
+    in-out property <string> pretty-draft;
+    in property <string> timezone;
+    in property <bool> can-ntp;
+    in property <bool> ntp;
+    in property <bool> ntp-synced;
+    in property <string> lang;
+    in property <string> layout;
+    in-out property <string> tz-query;
+    in-out property <string> lang-query;
+    in-out property <string> layout-query;
+    in property <[string]> tz-matches;
+    in property <[string]> lang-matches;
+    in property <[string]> layout-matches;
+    in property <string> status-text;
+
+    callback apply-hostname(string);
+    callback apply-pretty(string);
+    callback set-ntp(bool);
+    // kind: 0 time zone, 1 language, 2 keyboard layout
+    callback query-changed(int, string);
+    callback picked(int, int);
+
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitTitle { text: "System"; }
+    KitMuted {
+        text: "Machine-wide settings, applied through systemd. Each change asks for an administrator password.";
+        wrap-text: true;
+    }
+
+    KitVStack {
+        gap: "form";
+        KitLabel { text: "Name"; }
+        KitField {
+            label: "Hostname";
+            hint: "How the machine appears on the network: letters, digits, hyphens.";
+            KitHStack {
+                gap: "form";
+                KitLineEdit {
+                    text <=> root.hostname-draft;
+                    accepted(t) => { root.apply-hostname(t); }
+                }
+                KitButton {
+                    text: "Apply";
+                    enabled: root.hostname-draft != root.static-hostname;
+                    clicked => { root.apply-hostname(root.hostname-draft); }
+                }
+            }
+        }
+        KitField {
+            label: "Device name";
+            hint: "Free-form name shown to people, e.g. “Mason’s Desktop”.";
+            KitHStack {
+                gap: "form";
+                KitLineEdit {
+                    text <=> root.pretty-draft;
+                    placeholder: root.static-hostname;
+                    accepted(t) => { root.apply-pretty(t); }
+                }
+                KitButton {
+                    text: "Apply";
+                    enabled: root.pretty-draft != root.pretty-hostname;
+                    clicked => { root.apply-pretty(root.pretty-draft); }
+                }
+            }
+        }
+    }
+
+    KitVStack {
+        gap: "form";
+        KitLabel { text: "Date & time"; }
+        KitCheckBox {
+            text: "Set time automatically (NTP)";
+            enabled: root.can-ntp;
+            checked: root.ntp;
+            toggled(v) => { root.set-ntp(v); }
+        }
+        KitMuted {
+            text: !root.can-ntp ? "No NTP service is installed."
+                : root.ntp ? (root.ntp-synced ? "Clock is synchronized." : "Waiting for the first sync…")
+                : "Clock is set manually.";
+        }
+        Picker {
+            label: "Time zone";
+            current: root.timezone;
+            placeholder: "Search, e.g. Chicago";
+            matches: root.tz-matches;
+            query <=> root.tz-query;
+            query-changed(t) => { root.query-changed(0, t); }
+            picked(i) => { root.picked(0, i); }
+        }
+    }
+
+    KitVStack {
+        gap: "form";
+        KitLabel { text: "Language & keyboard"; }
+        Picker {
+            label: "Language";
+            current: root.lang;
+            placeholder: "Search, e.g. en_GB";
+            matches: root.lang-matches;
+            query <=> root.lang-query;
+            query-changed(t) => { root.query-changed(1, t); }
+            picked(i) => { root.picked(1, i); }
+        }
+        Picker {
+            label: "Keyboard layout";
+            current: root.layout;
+            placeholder: "Search, e.g. de";
+            matches: root.layout-matches;
+            query <=> root.layout-query;
+            query-changed(t) => { root.query-changed(2, t); }
+            picked(i) => { root.picked(2, i); }
+        }
+        KitMuted {
+            text: "The login screen keeps its own keyboard setting ([keyboard] in /etc/greetd/vigil.toml).";
+            wrap-text: true;
+        }
+    }
+
+    KitMuted { text: root.status-text; wrap-text: true; }
+    KitSpacer { axis: "vertical"; }
+}

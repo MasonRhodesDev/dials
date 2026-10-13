@@ -19,10 +19,12 @@ slint = { version = "=1.17.1", default-features = false, features = [
     "accessibility",
     "compat-1-2",
 ] }
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5f4a25315acf29916ac1004e7def14e0bce251ae" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Blocking only: dials has no async runtime. 5.x unifies with accesskit's copy.
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "async-io"] }
 
 [build-dependencies]
 slint-build = "=1.17.1"
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5f4a25315acf29916ac1004e7def14e0bce251ae" }

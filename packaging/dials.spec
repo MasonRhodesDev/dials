@@ -55,9 +55,9 @@ git = "https://github.com/MasonRhodesDev/hyprstate"
 rev = "746bbd2608f19e7e9ac5113131710f54f6c98f9e"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=ccd7397c3da83ff835d6295d6ec3841fc32c8bac"]
+[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=5f4a25315acf29916ac1004e7def14e0bce251ae"]
 git = "https://github.com/MasonRhodesDev/slint-kit"
-rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac"
+rev = "5f4a25315acf29916ac1004e7def14e0bce251ae"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/MasonRhodesDev/linux-multi-theme-toggle?rev=344529cd124c131da40409b152bc1604eebd53d0"]

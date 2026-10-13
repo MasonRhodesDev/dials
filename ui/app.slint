@@ -1,5 +1,6 @@
 // dials — desktop settings. Displays (canvas-first monitor profile editor),
-// Power, Help, and More (external settings tools from XDG desktop entries).
+// Power, System (hostname/time/locale via systemd), Help, and More (external
+// settings tools from XDG desktop entries).
 // UX: monitor-profiles/.plans/planning/ux_design.md
 
 import { Theme } from "theme.slint";
@@ -12,6 +13,7 @@ import {
 } from "widgets.slint";
 import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { PowerPage } from "power.slint";
+import { SystemPage } from "system.slint";
 import { HelpPage, HelpNode, HelpEdge } from "help.slint";
 
 export { Theme, Palette, HelpNode, HelpEdge }
@@ -141,6 +143,25 @@ export component AppWindow inherits Window {
     in-out property <string> help-power-now: "";
     in-out property <string> help-display-now: "";
 
+    // Section 5: System.
+    in-out property <string> sys-static-hostname: "";
+    in-out property <string> sys-pretty-hostname: "";
+    in-out property <string> sys-hostname-draft: "";
+    in-out property <string> sys-pretty-draft: "";
+    in-out property <string> sys-timezone: "";
+    in-out property <bool> sys-can-ntp: false;
+    in-out property <bool> sys-ntp: false;
+    in-out property <bool> sys-ntp-synced: false;
+    in-out property <string> sys-lang: "";
+    in-out property <string> sys-layout: "";
+    in-out property <string> sys-tz-query: "";
+    in-out property <string> sys-lang-query: "";
+    in-out property <string> sys-layout-query: "";
+    in-out property <[string]> sys-tz-matches: [];
+    in-out property <[string]> sys-lang-matches: [];
+    in-out property <[string]> sys-layout-matches: [];
+    in-out property <string> sys-status-text: "";
+
     callback open-profile(int);
     callback open-current-desk();
     callback back-to-list();
@@ -176,6 +197,12 @@ export component AppWindow inherits Window {
     callback section-changed(int);
     callback telemetry-wake();
     callback launch-entry(int);
+    callback admin-wake();
+    callback sys-apply-hostname(string);
+    callback sys-apply-pretty(string);
+    callback sys-set-ntp(bool);
+    callback sys-query-changed(int, string);
+    callback sys-picked(int, int);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -204,6 +231,14 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.section = 1;
                         root.section-changed(1);
+                    }
+                }
+                KitButton {
+                    text: "System";
+                    primary: root.section == 5;
+                    clicked => {
+                        root.section = 5;
+                        root.section-changed(5);
                     }
                 }
                 KitButton {
@@ -659,6 +694,37 @@ export component AppWindow inherits Window {
                 override-set(p) => { root.override-set(p); }
                 override-clear => { root.override-clear(); }
                 override-cycle => { root.override-cycle(); }
+            }
+        }
+
+    if root.section == 5: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            SystemPage {
+                static-hostname: root.sys-static-hostname;
+                pretty-hostname: root.sys-pretty-hostname;
+                hostname-draft <=> root.sys-hostname-draft;
+                pretty-draft <=> root.sys-pretty-draft;
+                timezone: root.sys-timezone;
+                can-ntp: root.sys-can-ntp;
+                ntp: root.sys-ntp;
+                ntp-synced: root.sys-ntp-synced;
+                lang: root.sys-lang;
+                layout: root.sys-layout;
+                tz-query <=> root.sys-tz-query;
+                lang-query <=> root.sys-lang-query;
+                layout-query <=> root.sys-layout-query;
+                tz-matches: root.sys-tz-matches;
+                lang-matches: root.sys-lang-matches;
+                layout-matches: root.sys-layout-matches;
+                status-text: root.sys-status-text;
+                apply-hostname(t) => { root.sys-apply-hostname(t); }
+                apply-pretty(t) => { root.sys-apply-pretty(t); }
+                set-ntp(v) => { root.sys-set-ntp(v); }
+                query-changed(k, t) => { root.sys-query-changed(k, t); }
+                picked(k, i) => { root.sys-picked(k, i); }
             }
         }
 
