@@ -1103,6 +1103,7 @@ name = "dials"
 version = "0.4.4"
 dependencies = [
  "hyprstate-fsm",
+ "libc",
  "monitor-profiles",
  "serde",
  "serde_json",

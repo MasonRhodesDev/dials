@@ -1,0 +1,356 @@
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitCheckBox, KitLineEdit, KitConfirm,
+    KitMuted, KitTitle, KitLabel, KitField, KitListRow, KitWarning,
+    KitVStack, KitHStack, KitSpacer, Panel
+} from "widgets.slint";
+
+export struct UserRow {
+    uid: int,
+    title: string,
+    meta: string,
+    initials: string,
+    icon: image,
+}
+
+export struct GroupCheck {
+    name: string,
+    member: bool,
+}
+
+/// Users page state. A global (not root properties) because the page has
+/// many fields and nothing else reads them; Rust sets it via `global::<Users>()`.
+export global Users {
+    in-out property <[UserRow]> rows: [];
+    in-out property <int> selected: -1;
+    in-out property <bool> service: true;
+    in-out property <bool> me-admin: false;
+    in-out property <string> status-text: "";
+
+    // Selected account.
+    in-out property <string> name: "";
+    in-out property <string> real-draft: "";
+    in-out property <string> real-name: "";
+    in-out property <string> icon-draft: "";
+    in-out property <bool> admin: false;
+    in-out property <bool> locked: false;
+    in-out property <bool> can-edit: false;
+    in-out property <bool> can-admin: false;
+    in-out property <bool> can-lock: false;
+    in-out property <bool> can-password: false;
+    in-out property <bool> needs-current: false;
+    in-out property <bool> can-delete: false;
+    in-out property <string> delete-reason: "";
+    in-out property <string> pw-current: "";
+    in-out property <string> pw-new: "";
+    in-out property <string> pw-confirm: "";
+    in-out property <bool> confirm-delete: false;
+    in-out property <bool> remove-home: false;
+
+    // Groups: checkboxes for the selected account, and the admin-made
+    // groups that can be deleted.
+    in-out property <[GroupCheck]> groups: [];
+    in-out property <[string]> custom-groups: [];
+    in-out property <string> new-group: "";
+    in-out property <string> confirm-group: "";
+
+    // Add-user form.
+    in-out property <bool> adding: false;
+    in-out property <string> new-name: "";
+    in-out property <string> new-real: "";
+    in-out property <bool> new-admin: false;
+    in-out property <string> new-pw: "";
+    in-out property <string> new-pw-confirm: "";
+
+    callback select(int);
+    callback apply-real(string);
+    callback apply-icon(string);
+    callback set-admin(bool);
+    callback set-locked(bool);
+    callback change-password();
+    callback delete-user();
+    callback create-user();
+    callback toggle-group(string, bool);
+    callback create-group();
+    callback delete-group(string);
+}
+
+component AddUserForm inherits Panel {
+    KitVStack {
+        gap: "form";
+        padding: Theme.space-lg;
+        KitLabel { text: "New account"; }
+        KitField {
+            label: "Full name";
+            KitLineEdit { text <=> Users.new-real; placeholder: "Ada Lovelace"; }
+        }
+        KitField {
+            label: "Username";
+            hint: "Lowercase letters, digits, _ and -. Can't be changed later.";
+            KitLineEdit { text <=> Users.new-name; placeholder: "ada"; }
+        }
+        KitCheckBox {
+            text: "Administrator";
+            checked: Users.new-admin;
+            toggled(v) => { Users.new-admin = v; }
+        }
+        KitField {
+            label: "Password";
+            KitLineEdit { text <=> Users.new-pw; input-type: password; }
+        }
+        KitField {
+            label: "Confirm password";
+            KitLineEdit {
+                text <=> Users.new-pw-confirm;
+                input-type: password;
+                accepted => { Users.create-user(); }
+            }
+        }
+        KitHStack {
+            gap: "form";
+            KitSpacer { axis: "horizontal"; }
+            KitButton {
+                text: "Cancel";
+                clicked => { Users.adding = false; }
+            }
+            KitButton {
+                text: "Create";
+                primary: true;
+                enabled: Users.new-name != "" && Users.new-pw != "";
+                clicked => { Users.create-user(); }
+            }
+        }
+    }
+}
+
+component Detail inherits KitVStack {
+    gap: "section";
+
+    KitTitle { text: Users.real-name != "" ? Users.real-name + " (" + Users.name + ")" : Users.name; }
+
+    KitVStack {
+        gap: "form";
+        KitField {
+            label: "Full name";
+            KitHStack {
+                gap: "form";
+                KitLineEdit {
+                    text <=> Users.real-draft;
+                    enabled: Users.can-edit;
+                    accepted(t) => { Users.apply-real(t); }
+                }
+                KitButton {
+                    text: "Apply";
+                    enabled: Users.can-edit && Users.real-draft != Users.real-name;
+                    clicked => { Users.apply-real(Users.real-draft); }
+                }
+            }
+        }
+        KitField {
+            label: "Picture";
+            hint: "Path to an image; it's copied, so the file can move afterwards.";
+            KitHStack {
+                gap: "form";
+                KitLineEdit {
+                    text <=> Users.icon-draft;
+                    enabled: Users.can-edit;
+                    placeholder: "~/Pictures/me.png";
+                    accepted(t) => { Users.apply-icon(t); }
+                }
+                KitButton {
+                    text: "Apply";
+                    enabled: Users.can-edit && Users.icon-draft != "";
+                    clicked => { Users.apply-icon(Users.icon-draft); }
+                }
+            }
+        }
+    }
+
+    if Users.me-admin: KitVStack {
+        gap: "tight";
+        KitCheckBox {
+            text: "Administrator (can install software and change system settings)";
+            enabled: Users.can-admin;
+            checked: Users.admin;
+            toggled(v) => { Users.set-admin(v); }
+        }
+        KitCheckBox {
+            text: "Disable login";
+            enabled: Users.can-lock;
+            checked: Users.locked;
+            toggled(v) => { Users.set-locked(v); }
+        }
+    }
+
+    if Users.me-admin && Users.groups.length > 0: KitVStack {
+        gap: "tight";
+        KitLabel { text: "Groups"; }
+        KitMuted { text: "Membership changes apply at the user's next login."; wrap-text: true; }
+        for g in Users.groups: KitCheckBox {
+            text: g.name;
+            checked: g.member;
+            toggled(v) => { Users.toggle-group(g.name, v); }
+        }
+    }
+
+    if Users.can-password: KitVStack {
+        gap: "form";
+        KitLabel { text: "Password"; }
+        if Users.needs-current: KitField {
+            label: "Current password";
+            KitLineEdit { text <=> Users.pw-current; input-type: password; }
+        }
+        KitField {
+            label: "New password";
+            KitLineEdit { text <=> Users.pw-new; input-type: password; }
+        }
+        KitField {
+            label: "Confirm new password";
+            KitLineEdit {
+                text <=> Users.pw-confirm;
+                input-type: password;
+                accepted => { Users.change-password(); }
+            }
+        }
+        KitHStack {
+            gap: "form";
+            KitButton {
+                text: "Change password";
+                enabled: Users.pw-new != "" && (!Users.needs-current || Users.pw-current != "");
+                clicked => { Users.change-password(); }
+            }
+        }
+    }
+
+    if Users.me-admin && !Users.confirm-delete: KitHStack {
+        gap: "form";
+        KitButton {
+            text: "Delete account…";
+            danger: true;
+            enabled: Users.can-delete;
+            clicked => {
+                Users.remove-home = false;
+                Users.confirm-delete = true;
+            }
+        }
+        if !Users.can-delete: KitMuted { text: Users.delete-reason; }
+    }
+    if Users.confirm-delete: KitConfirm {
+        title: "Delete " + Users.name + "?";
+        message: "The account is removed immediately. Files in the home directory stay unless you remove them too.";
+        KitCheckBox {
+            text: "Also remove the home directory";
+            checked: Users.remove-home;
+            toggled(v) => { Users.remove-home = v; }
+        }
+        confirmed => {
+            Users.confirm-delete = false;
+            Users.delete-user();
+        }
+        cancelled => { Users.confirm-delete = false; }
+    }
+}
+
+export component UsersPage inherits VerticalLayout {
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitHStack {
+        gap: "form";
+        KitTitle { text: "Users"; }
+        KitSpacer { axis: "horizontal"; }
+        if Users.me-admin && Users.service && !Users.adding: KitButton {
+            text: "Add user…";
+            clicked => {
+                Users.new-name = "";
+                Users.new-real = "";
+                Users.new-admin = false;
+                Users.new-pw = "";
+                Users.new-pw-confirm = "";
+                Users.adding = true;
+            }
+        }
+    }
+    KitMuted {
+        text: Users.me-admin
+            ? "Accounts on this computer. Changes ask for an administrator password."
+            : "Your account. Ask an administrator to change other accounts.";
+        wrap-text: true;
+    }
+    if !Users.service: KitWarning {
+        text: "AccountsService isn't installed, so accounts are read-only here.";
+    }
+
+    if Users.adding: AddUserForm { }
+
+    HorizontalLayout {
+        spacing: Theme.space-xl;
+        alignment: stretch;
+
+        VerticalLayout {
+            width: 280px;
+            spacing: Theme.space-xs;
+            alignment: start;
+            for row[i] in Users.rows: KitListRow {
+                title: row.title;
+                meta: row.meta;
+                initials: row.initials;
+                icon: row.icon;
+                active: i == Users.selected;
+                clicked => { Users.select(i); }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            if Users.selected >= 0: Detail { }
+        }
+    }
+
+    if Users.me-admin: KitVStack {
+        gap: "form";
+        KitLabel { text: "Groups you've made"; }
+        if Users.custom-groups.length == 0: KitMuted {
+            text: "None yet. System groups (audio, video, …) are managed per user above.";
+            wrap-text: true;
+        }
+        for name in Users.custom-groups: KitHStack {
+            gap: "form";
+            KitLabel { text: name; horizontal-stretch: 1; }
+            KitButton {
+                text: "Delete…";
+                small: true;
+                danger: true;
+                clicked => { Users.confirm-group = name; }
+            }
+        }
+        if Users.confirm-group != "": KitConfirm {
+            title: "Delete group " + Users.confirm-group + "?";
+            message: "Members lose any access the group gave them at their next login.";
+            confirmed => {
+                Users.delete-group(Users.confirm-group);
+                Users.confirm-group = "";
+            }
+            cancelled => { Users.confirm-group = ""; }
+        }
+        KitHStack {
+            gap: "form";
+            KitLineEdit {
+                text <=> Users.new-group;
+                placeholder: "New group name";
+                accepted => { Users.create-group(); }
+            }
+            KitButton {
+                text: "Create group";
+                enabled: Users.new-group != "";
+                clicked => { Users.create-group(); }
+            }
+        }
+    }
+
+    KitMuted { text: Users.status-text; wrap-text: true; }
+    KitSpacer { axis: "vertical"; }
+}

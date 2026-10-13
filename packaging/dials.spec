@@ -6,7 +6,7 @@
 Name:           dials
 Version:        0.4.4
 Release:        1%{?dist}
-Summary:        Desktop settings: displays, power, and a hub for other settings tools
+Summary:        Desktop settings: displays, power, users, system, and a hub for other settings tools
 License:        MIT
 URL:            https://github.com/MasonRhodesDev/dials
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
@@ -26,16 +26,24 @@ BuildRequires:  wayland-devel
 BuildRequires:  mesa-libGL-devel
 BuildRequires:  mesa-libEGL-devel
 BuildRequires:  libstdc++-devel
+# crypt_gensalt_ra / crypt_ra for AccountsService password hashes.
+BuildRequires:  libxcrypt-devel
 Requires:       mesa-libGL
 Requires:       fontconfig
 Recommends:     hyprstate
+# Users page writes (read-only without it); polkit's pkexec for groups.
+Recommends:     accountsservice
+Recommends:     polkit
 
 %description
 Slint desktop settings application. Displays and Power edit hyprstate's
 monitor-profile layouts and power policy map and show how lid/power/profile
-state is derived; More lists every other installed settings tool from its
-XDG desktop entry (Categories=Settings; or X-Dials-Section=) and launches
-it. Configuration lives in ~/.config/hypr and is not part of this package.
+state is derived; Users manages local accounts and groups through
+AccountsService and polkit; System sets hostname, time zone, NTP, language
+and keyboard through systemd; More lists every other installed settings
+tool from its XDG desktop entry (Categories=Settings; or X-Dials-Section=)
+and launches it. Configuration lives in ~/.config/hypr and is not part of
+this package.
 
 %prep
 # -a1 unpacks the vendor tarball (vendor/ at its root) into the source dir.

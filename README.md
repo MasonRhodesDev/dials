@@ -1,7 +1,7 @@
 # dials
 
 Desktop settings for Wayland sessions, in [Slint](https://slint.dev) on
-[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, four
+[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, six
 sections:
 
 - **Displays** — canvas-first editor for
@@ -11,6 +11,15 @@ sections:
   [hyprstate](https://github.com/MasonRhodesDev/hyprstate)'s hot-reload —
   there is no separate Apply.
 - **Power** — hyprstate's power policy map, sensors, and overrides.
+- **Users** — local accounts through
+  [AccountsService](https://gitlab.freedesktop.org/accountsservice/accountsservice):
+  add and delete, full name, picture, administrator, disable login,
+  passwords, and group membership. An administrator sees every account; a
+  standard user sees only their own and changes their password through
+  `passwd`. Group changes run `gpasswd` / `groupadd` / `groupdel` under
+  `pkexec`, since AccountsService only manages the admin group.
+- **System** — hostname, time zone, automatic time, language and keyboard
+  layout through systemd's hostnamed, timedated and localed.
 - **Help** — live graph of how hyprstate derives lid/power/display state.
 - **More** — every other settings tool installed on the system, launched in
   its own window.
@@ -48,6 +57,17 @@ Exec=kitty lmtt-config
 Categories=Settings;DesktopSettings;
 X-Dials-Section=Appearance
 ```
+
+## Privileges
+
+Users and System are the only pages that change anything outside your home
+directory, and dials never runs as root for them. Every write goes to a
+system service (AccountsService, systemd, or a stock shadow tool under
+`pkexec`) and polkit decides, prompting through your session's polkit agent
+(hyprpolkitagent on hypr-DE). Without an agent, writes fail with "no polkit
+agent is running". Without AccountsService the Users page is read-only.
+
+`dials --system` prints what the System page reads, without the UI.
 
 ## Run
 

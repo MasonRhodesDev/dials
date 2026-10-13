@@ -44,6 +44,8 @@ pub struct Snapshot {
     pub locale: Vec<String>,
     pub x11_layout: String,
     pub x11_variant: String,
+    pub x11_model: String,
+    pub x11_options: String,
 }
 
 /// Candidate values for the pickers. Read once per worker; they only change
@@ -91,6 +93,8 @@ pub fn read(conn: &Connection) -> (Snapshot, Vec<String>) {
             snap.locale = p.get_property("Locale").unwrap_or_default();
             snap.x11_layout = p.get_property("X11Layout").unwrap_or_default();
             snap.x11_variant = p.get_property("X11Variant").unwrap_or_default();
+            snap.x11_model = p.get_property("X11Model").unwrap_or_default();
+            snap.x11_options = p.get_property("X11Options").unwrap_or_default();
         }
         Err(e) => errors.push(format!("localed: {}", describe(&e))),
     }
@@ -172,11 +176,21 @@ pub fn set_lang(conn: &Connection, current: &[String], lang: &str) -> Result<(),
         .map_err(|e| describe(&e))
 }
 
-/// X11 layout with no variant; localed converts it to the console keymap too
-/// (`convert = true`), which is what a single keyboard choice means here.
-pub fn set_layout(conn: &Connection, layout: &str) -> Result<(), String> {
+/// Change the X11 layout, keeping the user's model and XkbOptions
+/// (caps:escape, grp:…). The variant is cleared: it belongs to the old
+/// layout. localed converts to the console keymap too (`convert = true`),
+/// which is what a single keyboard choice means here.
+pub fn set_layout(conn: &Connection, current: &Snapshot, layout: &str) -> Result<(), String> {
+    let model = current.x11_model.as_str();
+    let options = current.x11_options.as_str();
     proxy(conn, &LOCALE)
-        .and_then(|p| write(&p, "SetX11Keyboard", &(layout, "", "", "", true, true)))
+        .and_then(|p| {
+            write(
+                &p,
+                "SetX11Keyboard",
+                &(layout, model, "", options, true, true),
+            )
+        })
         .map_err(|e| describe(&e))
 }
 

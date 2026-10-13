@@ -1,6 +1,6 @@
 //! dials — desktop settings. Displays and power pages edit hyprstate
-//! intent; System writes machine settings through systemd (see
-//! `admin_pages`); the More page launches other settings tools from their
+//! intent; Users and System write accounts and machine settings through
+//! AccountsService and systemd (see `admin_pages`); the More page launches other settings tools from their
 //! XDG desktop entries (see `entries`).
 mod admin;
 mod admin_pages;
@@ -9,11 +9,13 @@ mod canvas;
 mod entries;
 mod help_graph;
 mod hyprctl;
+mod passwd_pty;
 mod power_io;
 mod profiles_io;
 mod sensors;
 mod system;
 mod telemetry;
+mod users;
 
 use std::cell::RefCell;
 use std::rc::Rc;

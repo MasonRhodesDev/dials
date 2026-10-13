@@ -22,6 +22,7 @@ slint = { version = "=1.17.1", default-features = false, features = [
 slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5f4a25315acf29916ac1004e7def14e0bce251ae" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+libc = "0.2"
 # Blocking only: dials has no async runtime. 5.x unifies with accesskit's copy.
 zbus = { version = "5.19", default-features = false, features = ["blocking-api", "async-io"] }
 
