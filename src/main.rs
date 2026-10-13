@@ -1,6 +1,7 @@
 //! dials — desktop settings. Displays and power pages edit hyprstate
-//! intent; the More page launches other settings tools from their XDG
-//! desktop entries (see `entries`).
+//! intent; Appearance sets the wallpaper through lmtt (see `wallpaper_io`);
+//! the More page launches other settings tools from their XDG desktop
+//! entries (see `entries`).
 mod align;
 mod canvas;
 mod entries;
@@ -10,12 +11,13 @@ mod power_io;
 mod profiles_io;
 mod sensors;
 mod telemetry;
+mod wallpaper_io;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{
     Arc, Mutex, Weak as SyncWeak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -24,8 +26,11 @@ use monitor_profiles::{
     ConnectedOutput, Mode, Monitor, Profile, ResolvedOutput, match_in_signature, resolve, select,
 };
 use profiles_io::{ListedProfile, load_merged, write_atomic};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel,
+};
 use slint_kit::{ThemeBridge, apply_theme};
+use wallpaper_io::{LmttJob, OutputInfo};
 
 slint::include_modules!();
 
@@ -68,6 +73,16 @@ struct AppState {
     help_live: telemetry::HelpLive,
     /// External settings tools (More page), in display order.
     entries: Vec<entries::Entry>,
+    /// Appearance page: non-origin output rows (the global row is a plain property).
+    wallpaper_outputs: Rc<VecModel<BackgroundRow>>,
+    wallpaper_current: Option<wallpaper_io::Current>,
+    /// Session flag: the user turned per-display on but has not chosen yet.
+    wallpaper_per_display: bool,
+    /// In-flight chooser/apply job (0 = idle); one at a time.
+    wallpaper_job: u64,
+    wallpaper_job_seq: u64,
+    /// Bumped per refresh so a stale preview worker stops decoding.
+    preview_gen: Arc<AtomicU64>,
 }
 
 #[derive(Default)]
@@ -98,6 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let canvas_model = Rc::new(VecModel::from(Vec::<CanvasMonitor>::new()));
     ui.set_canvas_monitors(ModelRc::from(canvas_model.clone()));
+    let wallpaper_outputs = Rc::new(VecModel::from(Vec::<BackgroundRow>::new()));
+    ui.set_wallpaper_outputs(ModelRc::from(wallpaper_outputs.clone()));
     let state = Rc::new(RefCell::new(AppState {
         listed: Vec::new(),
         live: Vec::new(),
@@ -113,6 +130,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sensor_picks: sensors::load_picks(),
         help_live: telemetry::HelpLive::default(),
         entries: Vec::new(),
+        wallpaper_outputs,
+        wallpaper_current: None,
+        wallpaper_per_display: false,
+        wallpaper_job: 0,
+        wallpaper_job_seq: 0,
+        preview_gen: Arc::new(AtomicU64::new(0)),
     }));
 
     refresh_list(&ui, &state);
@@ -446,6 +469,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if section == 3 {
                 refresh_entries(&ui, &state);
             }
+            if section == 4 {
+                refresh_wallpaper(&ui, &state);
+            }
         });
     }
     {
@@ -463,6 +489,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(()) => ui.set_status_text("".into()),
                 Err(e) => ui.set_status_text(format!("Could not launch {e}").into()),
             }
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_choose(move |selector| {
+            let ui = ui_weak.unwrap();
+            start_wallpaper_chooser(&ui, &state, selector.to_string());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_use_global(move |selector| {
+            let ui = ui_weak.unwrap();
+            use_global_wallpaper(&ui, &state, selector.as_str());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_per_display_changed(move |on| {
+            let ui = ui_weak.unwrap();
+            set_per_display_wallpapers(&ui, &state, on);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_refresh(move || {
+            let ui = ui_weak.unwrap();
+            refresh_wallpaper(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_picked(move |selector, path| {
+            let ui = ui_weak.unwrap();
+            apply_picked_wallpaper(&ui, &state, selector.as_str(), path.as_str());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_wallpaper_job_done(move |job, ok, msg| {
+            let ui = ui_weak.unwrap();
+            finish_wallpaper_job(&ui, &state, job as u64, ok, msg.to_string());
         });
     }
     refresh_entries(&ui, &state);
@@ -2062,6 +2136,453 @@ fn refresh_entries(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         .collect();
     ui.set_entries(ModelRc::from(Rc::new(VecModel::from(rows))));
     state.borrow_mut().entries = found;
+}
+
+// ---- Appearance page -------------------------------------------------------
+
+const PREVIEW_EDGE: u32 = 320;
+
+/// Re-read the registry against the live outputs and redraw the page.
+/// No hyprctl → the global row alone (no origin, no per-display switch).
+fn refresh_wallpaper(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let outputs: Vec<OutputInfo> = hyprctl::monitors()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| OutputInfo {
+                    connector: m.name.clone(),
+                    description: m.description.clone(),
+                    x: m.x,
+                    y: m.y,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let current = wallpaper_io::current(&outputs);
+    let can_apply = wallpaper_io::lmtt_available();
+    let status = match &current.error {
+        Some(e) => e.clone(),
+        None if !can_apply => "lmtt is not installed – needed to set the wallpaper.".to_string(),
+        None => String::new(),
+    };
+    let per_display = {
+        let mut st = state.borrow_mut();
+        let shown = st.wallpaper_per_display || !current.all_override_keys.is_empty();
+        st.wallpaper_current = Some(current);
+        shown
+    };
+    ui.set_wallpaper_can_apply(can_apply);
+    ui.set_wallpaper_can_per_display(outputs.len() >= 2 && can_apply);
+    ui.set_wallpaper_per_display(per_display);
+    ui.set_wallpaper_status(status.into());
+    push_wallpaper_rows(ui, state);
+    spawn_previews(ui, state);
+}
+
+fn layer_text(r: &wallpaper_io::Resolved) -> &'static str {
+    match r.layer {
+        "user" => "user profile",
+        "system" => "system profile",
+        "packaged" => "packaged default",
+        "none" => "not set",
+        other => other,
+    }
+}
+
+fn output_title(o: &OutputInfo) -> String {
+    if o.description.is_empty() {
+        o.connector.clone()
+    } else {
+        format!("{} · {}", o.connector, o.description)
+    }
+}
+
+fn row_from(
+    selector: &str,
+    title: String,
+    note: String,
+    r: &wallpaper_io::Resolved,
+) -> BackgroundRow {
+    BackgroundRow {
+        selector: selector.into(),
+        title: title.into(),
+        path: r
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+            .into(),
+        note: note.into(),
+        has_override: !r.override_keys.is_empty(),
+        preview: slint::Image::default(),
+        has_preview: false,
+    }
+}
+
+/// Rows without previews; `spawn_previews` fills the images in afterwards.
+fn push_wallpaper_rows(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let st = state.borrow();
+    let Some(cur) = st.wallpaper_current.as_ref() else {
+        return;
+    };
+    let per_display = ui.get_wallpaper_per_display();
+    let mut note = match (&cur.origin, per_display) {
+        (None, _) => "Shown on every display".to_string(),
+        (Some(o), false) => format!("Shown on every display · origin {}", o.connector),
+        (Some(o), true) => format!(
+            "Origin display {} — displays without their own wallpaper use this",
+            output_title(o)
+        ),
+    };
+    if cur.global.is_override && !cur.global.override_keys.is_empty() {
+        note.push_str(" (this display has its own override; choosing replaces it)");
+    }
+    note.push_str(" · ");
+    note.push_str(layer_text(&cur.global));
+    ui.set_wallpaper_global(row_from("", "Wallpaper".into(), note, &cur.global));
+
+    let rows: Vec<BackgroundRow> = cur
+        .others
+        .iter()
+        .map(|(o, r)| {
+            let note = if !r.override_keys.is_empty() {
+                "own wallpaper".to_string()
+            } else if r.is_override {
+                format!("own wallpaper from the {}", layer_text(r))
+            } else {
+                "uses the global wallpaper".to_string()
+            };
+            let selector = wallpaper_io::selector_for(&o.connector, &o.description);
+            row_from(&selector, output_title(o), note, r)
+        })
+        .collect();
+    st.wallpaper_outputs.set_vec(rows);
+}
+
+/// Decode every distinct current wallpaper off the UI thread; each result
+/// patches the rows whose path matches. A newer refresh stops the worker.
+fn spawn_previews(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
+    let (paths, generation, gen_cell) = {
+        let st = state.borrow();
+        let Some(cur) = st.wallpaper_current.as_ref() else {
+            return;
+        };
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for p in std::iter::once(&cur.global).chain(cur.others.iter().map(|(_, r)| r)) {
+            if let Some(p) = &p.path
+                && !paths.contains(p)
+            {
+                paths.push(p.clone());
+            }
+        }
+        let generation = st.preview_gen.fetch_add(1, Ordering::AcqRel) + 1;
+        (paths, generation, st.preview_gen.clone())
+    };
+    if paths.is_empty() {
+        return;
+    }
+    let ui_weak = ui.as_weak();
+    std::thread::Builder::new()
+        .name("wallpaper-preview".into())
+        .spawn(move || {
+            for path in paths {
+                if gen_cell.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                let Ok((w, h, rgba)) = wallpaper_io::decode_preview(&path, PREVIEW_EDGE) else {
+                    continue;
+                };
+                let key = path.to_string_lossy().into_owned();
+                if ui_weak
+                    .upgrade_in_event_loop(move |ui| apply_preview(&ui, &key, w, h, &rgba))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .ok();
+}
+
+fn apply_preview(ui: &AppWindow, path: &str, w: u32, h: u32, rgba: &[u8]) {
+    let image = slint::Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        rgba, w, h,
+    ));
+    let mut global = ui.get_wallpaper_global();
+    if global.path.as_str() == path {
+        global.preview = image.clone();
+        global.has_preview = true;
+        ui.set_wallpaper_global(global);
+    }
+    let rows = ui.get_wallpaper_outputs();
+    for i in 0..rows.row_count() {
+        if let Some(mut row) = rows.row_data(i)
+            && row.path.as_str() == path
+        {
+            row.preview = image.clone();
+            row.has_preview = true;
+            rows.set_row_data(i, row);
+        }
+    }
+}
+
+/// Claim the single job slot; None while another job runs.
+fn begin_wallpaper_job(ui: &AppWindow, state: &Rc<RefCell<AppState>>, status: &str) -> Option<u64> {
+    let mut st = state.borrow_mut();
+    if st.wallpaper_job != 0 {
+        return None;
+    }
+    st.wallpaper_job_seq += 1;
+    st.wallpaper_job = st.wallpaper_job_seq;
+    ui.set_wallpaper_busy(true);
+    ui.set_wallpaper_status(status.into());
+    Some(st.wallpaper_job)
+}
+
+/// The row a selector names ("" = global), if the page has it.
+fn wallpaper_row<'a>(
+    cur: &'a wallpaper_io::Current,
+    selector: &str,
+) -> Option<(Option<&'a OutputInfo>, &'a wallpaper_io::Resolved)> {
+    if selector.is_empty() {
+        return Some((cur.origin.as_ref(), &cur.global));
+    }
+    cur.others
+        .iter()
+        .find(|(o, _)| wallpaper_io::selector_for(&o.connector, &o.description) == selector)
+        .map(|(o, r)| (Some(o), r))
+}
+
+/// Open the XDG portal file chooser on a worker thread; the pick comes back
+/// through `wallpaper-picked`, a cancel or failure through `wallpaper-job-done`.
+fn start_wallpaper_chooser(ui: &AppWindow, state: &Rc<RefCell<AppState>>, selector: String) {
+    let start_dir = {
+        let st = state.borrow();
+        st.wallpaper_current
+            .as_ref()
+            .and_then(|cur| wallpaper_row(cur, &selector))
+            .and_then(|(_, r)| r.path.as_ref())
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+    };
+    let Some(job) = begin_wallpaper_job(ui, state, "Choosing…") else {
+        return;
+    };
+    let ui_weak = ui.as_weak();
+    std::thread::Builder::new()
+        .name("wallpaper-chooser".into())
+        .spawn(move || {
+            let (picked, ok, msg) = match async_io::block_on(pick_image(start_dir)) {
+                Ok(Some(path)) => (Some(path), true, String::new()),
+                Ok(None) => (None, true, String::new()),
+                Err(e) => (None, false, format!("File chooser: {e}")),
+            };
+            ui_weak
+                .upgrade_in_event_loop(move |ui| match picked {
+                    Some(path) => ui.invoke_wallpaper_picked(
+                        selector.into(),
+                        path.to_string_lossy().into_owned().into(),
+                    ),
+                    None => ui.invoke_wallpaper_job_done(job as i32, ok, msg.into()),
+                })
+                .ok();
+        })
+        .ok();
+}
+
+/// org.freedesktop.portal.FileChooser.OpenFile → the chosen local file.
+/// Ok(None) on cancel. No parent-window handle yet (Slint exposes none).
+async fn pick_image(
+    start_dir: Option<std::path::PathBuf>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
+    let build = || {
+        SelectedFiles::open_file()
+            .title("Choose a wallpaper")
+            .accept_label("Set wallpaper")
+            .modal(true)
+            .multiple(false)
+            .filter(
+                FileFilter::new("Images")
+                    .mimetype("image/png")
+                    .mimetype("image/jpeg")
+                    .mimetype("image/webp"),
+            )
+    };
+    let request = match &start_dir {
+        Some(dir) => build()
+            .current_folder(dir.as_path())
+            .unwrap_or_else(|_| build()),
+        None => build(),
+    };
+    match request.send().await.and_then(|r| r.response()) {
+        Ok(files) => {
+            let Some(uri) = files.uris().first() else {
+                return Ok(None);
+            };
+            let url = url::Url::parse(uri.as_str()).map_err(|e| e.to_string())?;
+            url.to_file_path()
+                .map(Some)
+                .map_err(|_| format!("not a local file: {uri}"))
+        }
+        Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Run one lmtt job on a worker thread under an already-claimed job id.
+fn start_wallpaper_job(ui: &AppWindow, job_id: u64, job: LmttJob, done: String) {
+    let ui_weak = ui.as_weak();
+    std::thread::Builder::new()
+        .name("wallpaper-apply".into())
+        .spawn(move || {
+            let lmtt = std::path::Path::new("lmtt");
+            // lmtt's own theme_state first; the token file slint-kit reads is
+            // written by every `lmtt switch`, so it only differs on a box that
+            // never switched. run_job_with refuses anything but dark|light.
+            let mode = wallpaper_io::current_mode_with(lmtt)
+                .unwrap_or_else(|| slint_kit::load_tokens().mode.to_ascii_lowercase());
+            let (ok, msg) = match wallpaper_io::run_job_with(lmtt, &job, &mode) {
+                Ok(()) => (true, done),
+                Err(e) => (false, e.to_string()),
+            };
+            ui_weak
+                .upgrade_in_event_loop(move |ui| {
+                    ui.invoke_wallpaper_job_done(job_id as i32, ok, msg.into())
+                })
+                .ok();
+        })
+        .ok();
+}
+
+/// The chooser picked a file: set it for the row's target. Choosing on the
+/// global row also drops any override the origin had, keeping origin ≡ global.
+fn apply_picked_wallpaper(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    selector: &str,
+    path: &str,
+) {
+    let (job_id, job, done) = {
+        let st = state.borrow();
+        let job_id = st.wallpaper_job;
+        if job_id == 0 {
+            return;
+        }
+        let Some(cur) = st.wallpaper_current.as_ref() else {
+            return;
+        };
+        let path = std::path::PathBuf::from(path);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if selector.is_empty() {
+            (
+                job_id,
+                LmttJob {
+                    set: Some((path, None)),
+                    unset: cur.global.override_keys.clone(),
+                },
+                format!("Wallpaper set: {name}"),
+            )
+        } else {
+            let who = wallpaper_row(cur, selector)
+                .and_then(|(o, _)| o)
+                .map(|o| o.connector.clone())
+                .unwrap_or_else(|| selector.to_string());
+            (
+                job_id,
+                LmttJob {
+                    set: Some((path, Some(selector.to_string()))),
+                    unset: Vec::new(),
+                },
+                format!("Wallpaper set for {who}: {name}"),
+            )
+        }
+    };
+    ui.set_wallpaper_status("Applying…".into());
+    start_wallpaper_job(ui, job_id, job, done);
+}
+
+fn use_global_wallpaper(ui: &AppWindow, state: &Rc<RefCell<AppState>>, selector: &str) {
+    let (keys, who) = {
+        let st = state.borrow();
+        let Some(cur) = st.wallpaper_current.as_ref() else {
+            return;
+        };
+        match wallpaper_row(cur, selector) {
+            Some((Some(o), r)) => (r.override_keys.clone(), o.connector.clone()),
+            _ => return,
+        }
+    };
+    if keys.is_empty() {
+        ui.set_wallpaper_status(format!("{who} already uses the global wallpaper.").into());
+        return;
+    }
+    let Some(job_id) = begin_wallpaper_job(ui, state, "Applying…") else {
+        return;
+    };
+    start_wallpaper_job(
+        ui,
+        job_id,
+        LmttJob {
+            set: None,
+            unset: keys,
+        },
+        format!("{who} uses the global wallpaper."),
+    );
+}
+
+/// The per-display switch. On reveals the rows and writes nothing; off
+/// removes every per-output override so all displays follow the global.
+fn set_per_display_wallpapers(ui: &AppWindow, state: &Rc<RefCell<AppState>>, on: bool) {
+    state.borrow_mut().wallpaper_per_display = on;
+    if on {
+        push_wallpaper_rows(ui, state);
+        return;
+    }
+    let keys = state
+        .borrow()
+        .wallpaper_current
+        .as_ref()
+        .map(|c| c.all_override_keys.clone())
+        .unwrap_or_default();
+    if keys.is_empty() {
+        push_wallpaper_rows(ui, state);
+        return;
+    }
+    let Some(job_id) = begin_wallpaper_job(ui, state, "Clearing per-display wallpapers…") else {
+        return;
+    };
+    start_wallpaper_job(
+        ui,
+        job_id,
+        LmttJob {
+            set: None,
+            unset: keys,
+        },
+        "Per-display wallpapers cleared; every display uses the global wallpaper.".into(),
+    );
+}
+
+fn finish_wallpaper_job(
+    ui: &AppWindow,
+    state: &Rc<RefCell<AppState>>,
+    job_id: u64,
+    _ok: bool,
+    msg: String,
+) {
+    {
+        let mut st = state.borrow_mut();
+        if st.wallpaper_job != job_id {
+            return;
+        }
+        st.wallpaper_job = 0;
+    }
+    ui.set_wallpaper_busy(false);
+    refresh_wallpaper(ui, state);
+    if !msg.is_empty() {
+        ui.set_wallpaper_status(msg.into());
+    }
 }
 
 #[cfg(test)]

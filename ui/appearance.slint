@@ -1,0 +1,137 @@
+// Appearance page: the desktop background. Reads the appearance-profiles
+// registry, writes only through `lmtt wallpaper …` (see src/wallpaper_io.rs).
+// The origin display (at 0,0) sets the global wallpaper; other displays
+// inherit it unless "Different wallpaper per display" is on.
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitCheckBox, KitMuted, KitTitle, KitLabel,
+    KitVStack, KitHStack, KitSpacer, Panel
+} from "widgets.slint";
+
+export struct BackgroundRow {
+    selector: string,      // "" = the global / origin row
+    title: string,
+    path: string,
+    note: string,
+    has-override: bool,    // the user profile has its own rule for this output
+    preview: image,
+    has-preview: bool,
+}
+
+component BackgroundCard inherits Panel {
+    in property <BackgroundRow> item;
+    in property <bool> enabled: true;
+    in property <bool> show-use-global: false;
+    callback choose();
+    callback use-global();
+
+    HorizontalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-md;
+
+        // Only the preview clips; Panel itself must not (soft text, Slint #10499).
+        Rectangle {
+            width: 160px;
+            height: 90px;
+            border-radius: Theme.radius-xs;
+            background: Theme.tile-bg;
+            clip: true;
+            if root.item.has-preview: Image {
+                source: root.item.preview;
+                image-fit: cover;
+                width: 100%;
+                height: 100%;
+            }
+            if !root.item.has-preview: KitMuted {
+                text: root.item.path == "" ? "no image" : "…";
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+        KitVStack {
+            gap: "tight";
+            horizontal-stretch: 1;
+            KitLabel { text: root.item.title; }
+            KitMuted { text: root.item.path == "" ? "Not set" : root.item.path; wrap-text: true; }
+            KitMuted { text: root.item.note; wrap-text: true; }
+        }
+        VerticalLayout {
+            spacing: Theme.space-sm;
+            alignment: start;
+            KitButton {
+                text: "Choose…";
+                enabled: root.enabled;
+                clicked => { root.choose(); }
+            }
+            if root.show-use-global: KitButton {
+                text: "Use global";
+                enabled: root.enabled;
+                clicked => { root.use-global(); }
+            }
+        }
+    }
+}
+
+export component AppearancePage inherits VerticalLayout {
+    in property <BackgroundRow> global;
+    in property <[BackgroundRow]> outputs;
+    in-out property <bool> per-display: false;
+    in property <bool> can-per-display: false;
+    in property <bool> busy: false;
+    in property <bool> can-apply: false;
+    in property <string> status-text;
+
+    callback choose(string);          // selector; "" = global
+    callback use-global(string);
+    callback per-display-changed(bool);
+    callback refresh();
+
+    padding: 0;
+    spacing: Theme.space-xl;
+    alignment: start;
+    width: 100%;
+
+    KitTitle { text: "Appearance"; }
+    KitMuted {
+        text: "The origin display (at 0,0) sets the wallpaper every other display inherits and the palette lmtt derives from it. Lock screen and greeter follow the same registry.";
+        wrap-text: true;
+    }
+
+    KitVStack {
+        gap: "form";
+        KitLabel { text: "Background"; }
+        BackgroundCard {
+            item: root.global;
+            enabled: !root.busy && root.can-apply;
+            choose => { root.choose(""); }
+        }
+        if root.can-per-display: KitCheckBox {
+            text: "Different wallpaper per display";
+            checked <=> root.per-display;
+            enabled: !root.busy && root.can-apply;
+            toggled(on) => { root.per-display-changed(on); }
+        }
+        if root.per-display && root.can-per-display: KitVStack {
+            gap: "form";
+            for r[i] in root.outputs: BackgroundCard {
+                item: r;
+                enabled: !root.busy && root.can-apply;
+                show-use-global: r.has-override;
+                choose => { root.choose(r.selector); }
+                use-global => { root.use-global(r.selector); }
+            }
+        }
+    }
+
+    KitHStack {
+        gap: "form";
+        KitButton {
+            text: "Refresh";
+            enabled: !root.busy;
+            clicked => { root.refresh(); }
+        }
+    }
+
+    KitMuted { text: root.status-text; wrap-text: true; }
+    KitSpacer { axis: "vertical"; }
+}

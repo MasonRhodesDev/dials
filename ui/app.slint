@@ -13,8 +13,9 @@ import {
 import { Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { PowerPage } from "power.slint";
 import { HelpPage, HelpNode, HelpEdge } from "help.slint";
+import { AppearancePage, BackgroundRow } from "appearance.slint";
 
-export { Theme, Palette, HelpNode, HelpEdge }
+export { Theme, Palette, HelpNode, HelpEdge, BackgroundRow }
 
 /// One external settings tool (More page). `section` groups rows.
 export struct SettingsEntry {
@@ -140,6 +141,13 @@ export component AppWindow inherits Window {
     in-out property <string> help-lid-now: "";
     in-out property <string> help-power-now: "";
     in-out property <string> help-display-now: "";
+    in-out property <BackgroundRow> wallpaper-global;
+    in-out property <[BackgroundRow]> wallpaper-outputs: [];
+    in-out property <bool> wallpaper-per-display: false;
+    in-out property <bool> wallpaper-can-per-display: false;
+    in-out property <bool> wallpaper-busy: false;
+    in-out property <bool> wallpaper-can-apply: false;
+    in-out property <string> wallpaper-status: "";
 
     callback open-profile(int);
     callback open-current-desk();
@@ -176,6 +184,13 @@ export component AppWindow inherits Window {
     callback section-changed(int);
     callback telemetry-wake();
     callback launch-entry(int);
+    callback wallpaper-choose(string);
+    callback wallpaper-use-global(string);
+    callback wallpaper-per-display-changed(bool);
+    callback wallpaper-refresh();
+    // Invoked from worker threads via upgrade_in_event_loop (like telemetry-wake).
+    callback wallpaper-picked(string, string);
+    callback wallpaper-job-done(int, bool, string);
 
     // Always-present root plane. Conditional pages are absolute-fill (if-alone shrink-wraps).
     Rectangle {
@@ -204,6 +219,14 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.section = 1;
                         root.section-changed(1);
+                    }
+                }
+                KitButton {
+                    text: "Appearance";
+                    primary: root.section == 4;
+                    clicked => {
+                        root.section = 4;
+                        root.section-changed(4);
                     }
                 }
                 KitButton {
@@ -693,6 +716,26 @@ export component AppWindow inherits Window {
                 display-lit-edges: root.help-display-lit-edges;
                 display-width: root.help-display-width;
                 display-height: root.help-display-height;
+            }
+        }
+
+    if root.section == 4: ScrollView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            AppearancePage {
+                global: root.wallpaper-global;
+                outputs: root.wallpaper-outputs;
+                per-display <=> root.wallpaper-per-display;
+                can-per-display: root.wallpaper-can-per-display;
+                busy: root.wallpaper-busy;
+                can-apply: root.wallpaper-can-apply;
+                status-text: root.wallpaper-status;
+                choose(s) => { root.wallpaper-choose(s); }
+                use-global(s) => { root.wallpaper-use-global(s); }
+                per-display-changed(b) => { root.wallpaper-per-display-changed(b); }
+                refresh => { root.wallpaper-refresh(); }
             }
         }
 

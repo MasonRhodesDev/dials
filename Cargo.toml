@@ -22,6 +22,15 @@ slint = { version = "=1.17.1", default-features = false, features = [
 slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Same source string lmtt-core pins (short rev, .git suffix): one compiled copy, and the
+# offline COPR source mapping in packaging/dials.spec already covers it.
+appearance-profiles = { git = "https://github.com/MasonRhodesDev/appearance-profiles.git", rev = "75d831a" }
+# Preview thumbnails (decoded off the UI thread). Unifies with the image crate Slint already links.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# XDG desktop portal file chooser (org.freedesktop.portal.FileChooser) on the zbus 5 already in the tree.
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "file_chooser"] }
+async-io = "2"
+url = "2"
 
 [build-dependencies]
 slint-build = "=1.17.1"
