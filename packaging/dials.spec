@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.5
+Version:        0.4.6
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
@@ -100,6 +100,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Tue Oct 13 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.6-1
+- Appearance page: lmtt's settings rendered from its own config schema, with
+  option lists from lmtt-core's detectors. Dark/Light switches at once; Apply
+  writes ~/.config/lmtt/config.toml without touching comments and re-renders
+  with lmtt switch; the palette lmtt derived is shown. Reads the packaged
+  schema from lmtt 0.3.3, or the copy lmtt-config writes.
+- Wallpaper stub tests no longer race on parallel builders.
+
 * Tue Oct 13 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.5-1
 - Displays shows each monitor's wallpaper on its tile and sets it from the
   inspector through lmtt: the origin display owns the global wallpaper, any
