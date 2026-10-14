@@ -6,7 +6,7 @@
 Name:           dials
 Version:        0.4.6
 Release:        1%{?dist}
-Summary:        Desktop settings: displays, power, users, system, and a hub for other settings tools
+Summary:        Desktop settings: displays, power, users, system and a settings hub
 License:        MIT
 URL:            https://github.com/MasonRhodesDev/dials
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
