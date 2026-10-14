@@ -36,13 +36,16 @@ export component HelpGraph inherits VerticalLayout {
     width: 100%;
 
     KitTitle { text: root.heading; }
+    // Conditional cells: pin the wrapped height (see wallpaper.slint).
     if root.now-text != "": KitMuted {
         text: root.now-text;
         wrap-text: true;
+        height: self.preferred-height;
     }
     if root.rules-note != "": KitMuted {
         text: root.rules-note;
         wrap-text: true;
+        height: self.preferred-height;
     }
     Rectangle {
         width: root.graph-width * 1px;
@@ -165,6 +168,7 @@ export component HelpPage inherits VerticalLayout {
     if root.status-text != "": KitMuted {
         text: root.status-text;
         wrap-text: true;
+        height: self.preferred-height;
     }
 
     HelpGraph {

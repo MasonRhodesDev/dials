@@ -372,11 +372,17 @@ mod tests {
         assert!(p("c", &format!("{body}NotShowIn=Hyprland;\n")).is_none());
     }
 
+    /// The two tests below set and clear `TERMINAL`; the harness runs tests on
+    /// parallel threads, so they take this lock to keep the variable to one
+    /// test at a time.
+    static TERMINAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn terminal_entries_get_a_host_or_are_hidden() {
+        let _env = TERMINAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let body = "[Desktop Entry]\nType=Application\nName=x\nExec=lmtt-config\nTerminal=true\nCategories=Settings;\n";
         // `true` exists on every PATH; use it as the terminal host.
-        // SAFETY: tests in this module run single-threaded for this var.
+        // SAFETY: TERMINAL_LOCK keeps this variable to one test at a time.
         unsafe { std::env::set_var("TERMINAL", "true -e") };
         let e = p("a", body);
         unsafe { std::env::remove_var("TERMINAL") };
@@ -389,7 +395,8 @@ mod tests {
 
     #[test]
     fn known_terminal_fallback_when_no_terminal_env() {
-        // SAFETY: tests in this module run single-threaded for this var.
+        let _env = TERMINAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: TERMINAL_LOCK keeps this variable to one test at a time.
         unsafe { std::env::remove_var("TERMINAL") };
         let host = terminal_host();
         let any_known = KNOWN_TERMINALS.iter().any(|(exe, _)| on_path(exe));
