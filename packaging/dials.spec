@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.6
+Version:        0.4.7
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, and a hub for other settings tools
 License:        MIT
@@ -100,6 +100,15 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Wed Oct 14 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.7-1
+- Displays inspector: the wallpaper field's note and path no longer get the
+  "Match / advanced" disclosure drawn over them, and the Choose button stays
+  inside the panel. Slint measures a conditional layout child at its
+  preferred width, so wrapped text inside one now pins its own height; the
+  same pin on the Appearance descriptions, Power sensors note, Help notes
+  and the More empty-state line.
+- The two entries tests that set and clear TERMINAL no longer race.
+
 * Tue Oct 13 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.6-1
 - Appearance page: lmtt's settings rendered from its own config schema, with
   option lists from lmtt-core's detectors. Dark/Light switches at once; Apply
