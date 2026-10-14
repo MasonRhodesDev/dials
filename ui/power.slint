@@ -149,6 +149,8 @@ export component PowerPage inherits VerticalLayout {
         KitMuted {
             text: "Auto uses the same defaults as hyprstate (logind lid, A* adapter, first battery). Pick a device only if detection is wrong.";
             wrap-text: true;
+            // Conditional cell: pin the wrapped height (see wallpaper.slint).
+            height: self.preferred-height;
         }
         KitField {
             label: "Lid";
