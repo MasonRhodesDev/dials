@@ -118,11 +118,9 @@ export component AppearancePage inherits VerticalLayout {
                         edited(t) => { root.field-text(f.id, t); }
                     }
                 }
-                // Repeated cell: pin the wrapped height (see wallpaper.slint).
                 KitMuted {
                     text: f.description;
                     wrap-text: true;
-                    height: self.preferred-height;
                 }
             }
 

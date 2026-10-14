@@ -2,12 +2,6 @@
 // The origin display shows only the selector: choosing sets the global
 // wallpaper. Any other display shows an Override checkbox; ticked, it
 // reveals the selector for that display's own image.
-//
-// Every wrapped text here pins its height to its preferred height. Slint 1.17
-// measures a conditional (`if`) layout child at its *preferred* width, so a
-// wrapped text inside one would be counted as a single line and the items
-// after it (the Match disclosure) would be drawn over it. The explicit height
-// is computed from the text's real width instead.
 import { Theme } from "theme.slint";
 import { KitButton, KitCheckBox, KitLabel, KitMuted } from "widgets.slint";
 
@@ -40,7 +34,6 @@ export component WallpaperField inherits VerticalLayout {
     if !root.is-origin && !root.override-on: KitMuted {
         text: root.note;
         wrap-text: true;
-        height: self.preferred-height;
     }
 
     if root.is-origin || root.override-on: VerticalLayout {
@@ -73,14 +66,12 @@ export component WallpaperField inherits VerticalLayout {
                 KitMuted {
                     text: root.path;
                     wrap-text: true;
-                    height: self.preferred-height;
                 }
             }
         }
         KitMuted {
             text: root.note;
             wrap-text: true;
-            height: self.preferred-height;
         }
         HorizontalLayout {
             padding: 0;
@@ -97,6 +88,5 @@ export component WallpaperField inherits VerticalLayout {
     if root.status != "": KitMuted {
         text: root.status;
         wrap-text: true;
-        height: self.preferred-height;
     }
 }

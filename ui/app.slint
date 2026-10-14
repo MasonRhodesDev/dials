@@ -590,8 +590,6 @@ export component AppWindow inherits Window {
                             text: "Not in this profile yet — save to keep it.";
                             color: Theme.warning-fg;
                             wrap: word-wrap;
-                            // Conditional cell: pin the wrapped height (see wallpaper.slint).
-                            height: self.preferred-height;
                         }
 
                         KitField {
@@ -697,7 +695,6 @@ export component AppWindow inherits Window {
                         if root.show-advanced: KitLabel {
                             text: root.insp-match;
                             wrap: word-wrap;
-                            height: self.preferred-height;
                         }
                     }
                 }
@@ -820,7 +817,6 @@ export component AppWindow inherits Window {
                 if root.entries.length == 0: KitMuted {
                     text: "No settings tools found. A tool is listed when its desktop entry has Categories=Settings; or X-Dials-Section=<section>.";
                     wrap-text: true;
-                    height: self.preferred-height;
                 }
 
                 KitVStack {
