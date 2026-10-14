@@ -1,7 +1,7 @@
 # dials
 
 Desktop settings for Wayland sessions, in [Slint](https://slint.dev) on
-[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, six
+[slint-kit](https://github.com/MasonRhodesDev/slint-kit). One window, seven
 sections:
 
 - **Displays** — canvas-first editor for
@@ -16,6 +16,15 @@ sections:
   settings, rendered from lmtt's own config schema: dark/light mode, scheme
   type, palette source, GTK/icon/cursor/font and editor themes per mode,
   and the palette lmtt derived.
+- **Users** — local accounts through
+  [AccountsService](https://gitlab.freedesktop.org/accountsservice/accountsservice):
+  add and delete, full name, picture, administrator, disable login,
+  passwords, and group membership. An administrator sees every account; a
+  standard user sees only their own and changes their password through
+  `passwd`. Group changes run `gpasswd` / `groupadd` / `groupdel` under
+  `pkexec`, since AccountsService only manages the admin group.
+- **System** — hostname, time zone, automatic time, language and keyboard
+  layout through systemd's hostnamed, timedated and localed.
 - **Help** — live graph of how hyprstate derives lid/power/display state.
 - **More** — every other settings tool installed on the system, launched in
   its own window.
@@ -59,13 +68,26 @@ writes `~/.config/lmtt/config.toml` without touching your comments and
 runs `lmtt switch` in the current mode so every module re-renders. The
 wallpaper is shown here but set in Displays.
 
+## Privileges
+
+Users and System are the only pages that change anything outside your home
+directory, and dials never runs as root for them. Every write goes to a
+system service (AccountsService, systemd, or a stock shadow tool under
+`pkexec`) and polkit decides, prompting through your session's polkit agent
+(hyprpolkitagent on hypr-DE). Without an agent, writes fail with "no polkit
+agent is running". Without AccountsService the Users page is read-only.
+
+`dials --system` prints what the System page reads, without the UI.
+
 ## Pages are optional modules
 
 Each core-family integration is an in-process page module behind a cargo
 feature (`src/pages`): `displays` (monitor-profiles, hyprctl), `power` and
 `help` (hyprstate), `wallpaper` (lmtt and the appearance registry; plugs
 into Displays through the hooks in `src/pages/mod.rs`), `appearance` (lmtt's
-settings through lmtt-core and its config schema). A build without a
+settings through lmtt-core and its config schema), `users` and `system`
+(AccountsService, systemd and polkit over zbus; they share one worker
+thread). A build without a
 feature drops that page and its crates; a page whose tool is missing at
 run time hides its toolbar button. `cargo build --no-default-features`
 leaves only More. Third-party tools never become pages: More launches them

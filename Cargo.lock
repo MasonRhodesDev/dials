@@ -1121,6 +1121,7 @@ dependencies = [
  "async-io",
  "hyprstate-fsm",
  "image",
+ "libc",
  "lmtt-core",
  "monitor-profiles",
  "serde",
@@ -1131,6 +1132,7 @@ dependencies = [
  "toml_edit 0.25.13+spec-1.1.0",
  "url",
  "xdg-paths",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -4736,7 +4738,7 @@ dependencies = [
 [[package]]
 name = "slint-kit"
 version = "0.2.0"
-source = "git+https://github.com/MasonRhodesDev/slint-kit?rev=ccd7397c3da83ff835d6295d6ec3841fc32c8bac#ccd7397c3da83ff835d6295d6ec3841fc32c8bac"
+source = "git+https://github.com/MasonRhodesDev/slint-kit?rev=5f4a25315acf29916ac1004e7def14e0bce251ae#5f4a25315acf29916ac1004e7def14e0bce251ae"
 dependencies = [
  "lmtt-core",
  "notify",

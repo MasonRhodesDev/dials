@@ -6,7 +6,7 @@
 Name:           dials
 Version:        0.4.6
 Release:        1%{?dist}
-Summary:        Desktop settings: displays, power, and a hub for other settings tools
+Summary:        Desktop settings: displays, power, users, system, and a hub for other settings tools
 License:        MIT
 URL:            https://github.com/MasonRhodesDev/dials
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
@@ -26,18 +26,25 @@ BuildRequires:  wayland-devel
 BuildRequires:  mesa-libGL-devel
 BuildRequires:  mesa-libEGL-devel
 BuildRequires:  libstdc++-devel
+# crypt_gensalt_ra / crypt_ra for AccountsService password hashes.
+BuildRequires:  libxcrypt-devel
 Requires:       mesa-libGL
 Requires:       fontconfig
 Recommends:     hyprstate
 # Wallpaper field in Displays: runs `lmtt wallpaper` / `lmtt switch`.
 Recommends:     lmtt
+# Users page writes (read-only without it); polkit's pkexec for groups.
+Recommends:     accountsservice
+Recommends:     polkit
 
 %description
 Slint desktop settings application. Displays and Power edit hyprstate's
 monitor-profile layouts and power policy map and show how lid/power/profile
 state is derived; Displays also shows and sets each monitor's wallpaper
 through lmtt and the appearance-profiles registry; Appearance edits lmtt's
-settings from its config schema; More lists every other
+settings from its config schema; Users manages local accounts and groups
+through AccountsService and polkit; System sets hostname, time zone, NTP,
+language and keyboard through systemd; More lists every other
 installed settings tool from its XDG desktop entry (Categories=Settings; or
 X-Dials-Section=) and launches it. Configuration lives in ~/.config/hypr and
 ~/.config/appearance-profiles and is not part of this package.
@@ -60,9 +67,9 @@ git = "https://github.com/MasonRhodesDev/hyprstate"
 rev = "746bbd2608f19e7e9ac5113131710f54f6c98f9e"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=ccd7397c3da83ff835d6295d6ec3841fc32c8bac"]
+[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=5f4a25315acf29916ac1004e7def14e0bce251ae"]
 git = "https://github.com/MasonRhodesDev/slint-kit"
-rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac"
+rev = "5f4a25315acf29916ac1004e7def14e0bce251ae"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/MasonRhodesDev/linux-multi-theme-toggle?rev=344529cd124c131da40409b152bc1604eebd53d0"]

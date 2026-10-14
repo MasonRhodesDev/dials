@@ -3,7 +3,7 @@ name = "dials"
 version = "0.4.6"
 edition = "2024"
 license = "MIT"
-description = "Desktop settings for Wayland sessions: displays, power, and a hub for other settings tools"
+description = "Desktop settings for Wayland sessions: displays, power, users, system, and a hub for other settings tools"
 repository = "https://github.com/MasonRhodesDev/dials"
 publish = false
 
@@ -19,7 +19,7 @@ slint = { version = "=1.17.1", default-features = false, features = [
     "accessibility",
     "compat-1-2",
 ] }
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5f4a25315acf29916ac1004e7def14e0bce251ae" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Same source string lmtt-core pins (short rev, .git suffix): one compiled copy, and the
@@ -35,11 +35,15 @@ url = { version = "2", optional = true }
 # comment-preserving edits of ~/.config/lmtt/config.toml.
 lmtt-core = { git = "https://github.com/MasonRhodesDev/linux-multi-theme-toggle", rev = "344529cd124c131da40409b152bc1604eebd53d0", optional = true }
 toml_edit = { version = "0.25", optional = true }
+# Users and System: AccountsService, systemd and login1 on the system bus.
+# Blocking only: dials has no async runtime. 5.x unifies with accesskit's copy.
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "async-io"], optional = true }
+libc = { version = "0.2", optional = true }
 
 [features]
 # Each core-family integration is a page module behind a feature (src/pages).
 # A build without one drops that page and its crates; More always remains.
-default = ["displays", "power", "help", "wallpaper", "appearance"]
+default = ["displays", "power", "help", "wallpaper", "appearance", "users", "system"]
 # hyprstate daemon surface: telemetry client and policy types.
 hyprstate = ["dep:hyprstate-fsm"]
 # Displays: monitor-profiles editor on hyprctl.
@@ -53,7 +57,15 @@ help = ["hyprstate", "displays", "power"]
 wallpaper = ["displays", "dep:appearance-profiles", "dep:image", "dep:ashpd", "dep:async-io", "dep:url"]
 # Appearance: lmtt's settings, rendered from its config schema.
 appearance = ["dep:lmtt-core", "dep:toml_edit"]
+# Privileged-write worker shared by Users and System: one thread on the system
+# bus, so polkit prompts never block the UI.
+admin = ["dep:zbus", "dep:libc"]
+# Users: accounts through AccountsService, groups through pkexec, passwords
+# (libxcrypt hashes; passwd on a pty for self-change).
+users = ["admin"]
+# System: hostname, time zone, NTP, language and keyboard through systemd.
+system = ["admin"]
 
 [build-dependencies]
 slint-build = "=1.17.1"
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "5f4a25315acf29916ac1004e7def14e0bce251ae" }
