@@ -278,6 +278,42 @@ settle_ms = 3000
 id = "in-video"
 do = { session = "id -nG dialstest | grep -qw video" }
 
+[[step]]
+id = "untoggle-video"
+do = { vmkit = ["tap", "391", "537"] }
+
+[[step]]
+id = "untoggle-video-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "untoggle-video-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "untoggle-video-done"
+do = { session = "! id -nG dialstest | grep -qw video" }
+
+[[step]]
+id = "untoggle-admin"
+do = { vmkit = ["tap", "391", "382"] }
+
+[[step]]
+id = "untoggle-admin-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "untoggle-admin-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "untoggle-admin-done"
+do = { session = "! id -nG dialstest | grep -qw wheel" }
+
 # ---- password: set it, which also unlocks ------------------------------------
 
 [[step]]
@@ -345,6 +381,44 @@ settle_ms = 1200
   tolerance = 60
   min_fraction = 0.3
   not = true
+
+# ---- disable and re-enable login with the checkbox ---------------------------
+
+[[step]]
+id = "relock"
+do = { vmkit = ["tap", "391", "418"] }
+
+[[step]]
+id = "relock-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "relock-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "relock-done"
+do = { session = "sudo passwd -S dialstest | grep -q ' L '" }
+
+[[step]]
+id = "unlock"
+do = { vmkit = ["tap", "391", "418"] }
+
+[[step]]
+id = "unlock-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "unlock-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "unlock-done"
+do = { session = "! sudo passwd -S dialstest | grep -q ' L '" }
 
 # ---- groups: create, cancel a delete, delete ---------------------------------
 
