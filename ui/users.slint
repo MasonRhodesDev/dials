@@ -133,6 +133,7 @@ component Detail inherits KitVStack {
         KitField {
             label: "Full name";
             KitHStack {
+                alignment: stretch;
                 gap: "form";
                 KitLineEdit {
                     text <=> Users.real-draft;
@@ -150,6 +151,7 @@ component Detail inherits KitVStack {
             label: "Picture";
             hint: "Path to an image; it's copied, so the file can move afterwards.";
             KitHStack {
+                alignment: stretch;
                 gap: "form";
                 KitLineEdit {
                     text <=> Users.icon-draft;
@@ -290,7 +292,7 @@ export component UsersPage inherits VerticalLayout {
         alignment: stretch;
 
         VerticalLayout {
-            width: 280px;
+            width: 320px;
             spacing: Theme.space-xs;
             alignment: start;
             for row[i] in Users.rows: KitListRow {
@@ -337,6 +339,7 @@ export component UsersPage inherits VerticalLayout {
             cancelled => { Users.confirm-group = ""; }
         }
         KitHStack {
+            alignment: stretch;
             gap: "form";
             KitLineEdit {
                 text <=> Users.new-group;

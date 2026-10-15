@@ -369,7 +369,7 @@ fn clear_passwords(g: &Users) {
 }
 
 fn row_meta(a: &accounts::Account, me_uid: u32) -> String {
-    let mut parts = vec![if a.admin { "Administrator" } else { "Standard" }];
+    let mut parts = vec![if a.admin { "Admin" } else { "Standard" }];
     if a.locked {
         parts.push("login disabled");
     }

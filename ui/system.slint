@@ -76,6 +76,7 @@ export component SystemPage inherits VerticalLayout {
             label: "Hostname";
             hint: "How the machine appears on the network: letters, digits, hyphens.";
             KitHStack {
+                alignment: stretch;
                 gap: "form";
                 KitLineEdit {
                     text <=> root.hostname-draft;
@@ -92,6 +93,7 @@ export component SystemPage inherits VerticalLayout {
             label: "Device name";
             hint: "Free-form name shown to people, e.g. “Mason’s Desktop”.";
             KitHStack {
+                alignment: stretch;
                 gap: "form";
                 KitLineEdit {
                     text <=> root.pretty-draft;

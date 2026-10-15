@@ -137,9 +137,13 @@ pub fn group_choices<'a>(
         .iter()
         .filter_map(|name| groups.iter().find(|g| g.name == *name))
         .collect();
+    // A common group can sit in the user gid range too (plugdev made by
+    // hand on Arch); it's already listed, so don't offer it twice.
     let mut custom: Vec<&GroupEntry> = groups
         .iter()
-        .filter(|g| is_custom_group(g, defs, primary_gids))
+        .filter(|g| {
+            is_custom_group(g, defs, primary_gids) && !COMMON_GROUPS.contains(&g.name.as_str())
+        })
         .collect();
     custom.sort_by(|a, b| a.name.cmp(&b.name));
     out.extend(custom);
@@ -644,6 +648,19 @@ band:x:1500:ada
         assert!(can_delete_group(&groups[5], &defs, &primary).is_ok());
         assert!(can_delete_group(&groups[3], &defs, &primary).is_err());
         assert!(can_delete_group(&groups[1], &defs, &primary).is_err());
+
+        // A common group with a user-range gid is listed once, in common order.
+        let mut groups = groups;
+        groups.push(GroupEntry {
+            name: "plugdev".into(),
+            gid: 1001,
+            members: vec!["mason".into()],
+        });
+        let names: Vec<&str> = group_choices(&groups, &defs, &primary)
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect();
+        assert_eq!(names, ["audio", "video", "plugdev", "band"]);
     }
 
     #[test]
