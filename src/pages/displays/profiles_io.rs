@@ -84,6 +84,12 @@ pub fn write_atomic(path: &Path, profile: &Profile) -> Result<(), String> {
     let content = to_toml(profile);
     let tmp = path.with_extension(format!("toml.tmp-{}", std::process::id()));
     fs::write(&tmp, &content).map_err(|e| e.to_string())?;
+    // The shared dir is group-editable (2775 root:monitor-profiles); a 0644
+    // file there could only be replaced by other members, never edited.
+    if path.parent() == Some(shared_dir().as_path()) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o664)).map_err(|e| e.to_string())?;
+    }
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
