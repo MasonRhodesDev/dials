@@ -350,7 +350,11 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 subtitle: root.editor-badge
                     + " · "
-                    + root.editor-source
+                    // Which dir the profile lives in decides whether the
+                    // login screen (vigil reads only the shared one) uses it.
+                    + (root.editor-source == "user" ? "Yours only, not on the login screen"
+                        : root.editor-source == "shared" ? "Shared with the login screen"
+                        : root.editor-source)
                     + (root.editor-dirty ? " · Modified" : "");
 
                 if !root.renaming-profile: TouchArea {

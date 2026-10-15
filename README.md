@@ -6,8 +6,11 @@ sections:
 
 - **Displays** — canvas-first editor for
   [`monitor-profiles`](https://github.com/MasonRhodesDev/monitor-profiles)
-  TOML under `~/.config/hypr/profiles` (and shared `/etc/monitor-profiles`
-  for the greeter). Save relies on
+  TOML. Save writes to the shared `/etc/monitor-profiles` whenever you
+  can write there (membership in the `monitor-profiles` group), because
+  that is the only directory the login screen reads; without access it
+  saves to `~/.config/hypr/profiles` and the editor says the layout is
+  yours only. Save relies on
   [hyprstate](https://github.com/MasonRhodesDev/hyprstate)'s hot-reload —
   there is no separate Apply. Each monitor tile shows its wallpaper and the
   inspector sets it (see Wallpaper).
