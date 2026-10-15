@@ -133,6 +133,23 @@ Wayland compositor. Packaged
 Fedora/Arch installs put the binary in `/usr/bin` and a Settings desktop
 entry in `/usr/share/applications`.
 
+## QA in a VM
+
+The Users and System write paths have [hypr-qa](https://github.com/MasonRhodesDev/hypr-qa)
+scenarios in `tests/qa/`. They run in a QEMU guest (never on your desktop):
+QMP clicks and types, the guest's polkit agent prompts, the scenario answers
+with the guest user's password, and each change is checked against the
+guest's own records (`getent`, `/etc/shadow`, `hostnamectl`, `timedatectl`,
+`localectl`).
+
+```sh
+tests/qa/run                 # builds the release binary, runs every scenario
+tests/qa/run users.toml      # one
+```
+
+It needs a KVM host with hypr-qa (`$HYPR_QA`, default `~/repos/hypr-qa`) and
+its `plain-hyprland` profile built.
+
 ## Releasing
 
 Bump `Cargo.toml`, `packaging/dials.spec` (+ `%changelog`), and

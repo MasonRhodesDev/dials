@@ -91,7 +91,7 @@ component AddUserForm inherits Panel {
         }
         KitCheckBox {
             text: "Administrator";
-            checked: Users.new-admin;
+            checked <=> Users.new-admin;
             toggled(v) => { Users.new-admin = v; }
         }
         KitField {
@@ -173,13 +173,13 @@ component Detail inherits KitVStack {
         KitCheckBox {
             text: "Administrator (can install software and change system settings)";
             enabled: Users.can-admin;
-            checked: Users.admin;
+            checked <=> Users.admin;
             toggled(v) => { Users.set-admin(v); }
         }
         KitCheckBox {
             text: "Disable login";
             enabled: Users.can-lock;
-            checked: Users.locked;
+            checked <=> Users.locked;
             toggled(v) => { Users.set-locked(v); }
         }
     }
@@ -242,7 +242,7 @@ component Detail inherits KitVStack {
         message: "The account is removed immediately. Files in the home directory stay unless you remove them too.";
         KitCheckBox {
             text: "Also remove the home directory";
-            checked: Users.remove-home;
+            checked <=> Users.remove-home;
             toggled(v) => { Users.remove-home = v; }
         }
         confirmed => {

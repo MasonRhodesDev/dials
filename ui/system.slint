@@ -39,7 +39,7 @@ export component SystemPage inherits VerticalLayout {
     in-out property <string> pretty-draft;
     in property <string> timezone;
     in property <bool> can-ntp;
-    in property <bool> ntp;
+    in-out property <bool> ntp;
     in property <bool> ntp-synced;
     in property <string> lang;
     in property <string> layout;
@@ -115,7 +115,7 @@ export component SystemPage inherits VerticalLayout {
         KitCheckBox {
             text: "Set time automatically (NTP)";
             enabled: root.can-ntp;
-            checked: root.ntp;
+            checked <=> root.ntp;
             toggled(v) => { root.set-ntp(v); }
         }
         KitMuted {
