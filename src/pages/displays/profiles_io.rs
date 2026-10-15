@@ -100,7 +100,8 @@ pub fn shared_writable() -> bool {
         .is_ok()
 }
 
-/// New profiles default to the user dir (no perms surprises).
+/// The per-user location: where Save lands without write access to the
+/// shared dir.
 pub fn user_profile_path(name: &str) -> PathBuf {
     user_dir().join(format!("{name}.toml"))
 }

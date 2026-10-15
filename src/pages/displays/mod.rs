@@ -1342,6 +1342,7 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let path;
     let profile;
     let wrote_user_override;
+    let saved_user_only;
     {
         let mut st = state.borrow_mut();
         let Some(ed) = st.displays.editor.as_mut() else {
@@ -1358,20 +1359,21 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         }
         ed.profile.name = stem.clone();
         old_path = ed.listed.path.clone();
-        // Shared: write in place when writable, else fall back to user (no perms fight).
-        let (dest, user_override) = match ed.listed.source {
-            profiles_io::Source::User => (profiles_io::user_profile_path(&stem), false),
-            profiles_io::Source::Shared => {
-                if profiles_io::shared_writable() {
-                    (profiles_io::shared_profile_path(&stem), false)
-                } else {
-                    (profiles_io::user_profile_path(&stem), true)
-                }
-            }
+        // The greeter reads only the shared dir, so a layout saved anywhere
+        // else is one the login screen never shows: edit the HP's rotation
+        // in a user-dir profile and the greeter keeps drawing the old one.
+        // Save to shared whenever we can, whichever dir the profile came
+        // from (the user copy is removed below so it cannot shadow it), and
+        // fall back to the user dir only without write access.
+        let shared = profiles_io::shared_writable();
+        path = if shared {
+            profiles_io::shared_profile_path(&stem)
+        } else {
+            profiles_io::user_profile_path(&stem)
         };
-        path = dest;
         profile = ed.profile.clone();
-        wrote_user_override = user_override;
+        wrote_user_override = !shared && ed.listed.source == profiles_io::Source::Shared;
+        saved_user_only = !shared;
     }
     match write_atomic(&path, &profile) {
         Ok(()) => {
@@ -1380,7 +1382,11 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             }
             ui.set_editor_dirty(false);
             ui.set_editor_name(profile.name.clone().into());
-            ui.set_status_text("Waiting for session…".into());
+            ui.set_status_text(if saved_user_only {
+                "Saved for you only: the login screen can't see it without write access to /etc/monitor-profiles. Waiting for session…".into()
+            } else {
+                "Waiting for session…".into()
+            });
             {
                 let mut st = state.borrow_mut();
                 st.displays.save_wait = Some(Instant::now());
@@ -1393,7 +1399,10 @@ fn save_editor(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
                 if wrote_user_override {
                     ed.listed.source = profiles_io::Source::User;
                     ui.set_editor_source("user".into());
-                    ui.set_can_promote_shared(profiles_io::shared_writable());
+                } else if !saved_user_only {
+                    ed.listed.source = profiles_io::Source::Shared;
+                    ui.set_editor_source("shared".into());
+                    ui.set_can_promote_shared(false);
                 }
             }
             let name = state
