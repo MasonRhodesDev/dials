@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { FingerprintSlot } from "fingerprint.slint";
 import {
     KitButton, KitCheckBox, KitLineEdit, KitConfirm,
     KitMuted, KitTitle, KitLabel, KitField, KitListRow, KitWarning,
@@ -223,6 +224,8 @@ component Detail inherits KitVStack {
             }
         }
     }
+
+    FingerprintSlot { account: Users.name; }
 
     if Users.me-admin && !Users.confirm-delete: KitHStack {
         gap: "form";

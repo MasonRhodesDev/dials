@@ -13,6 +13,8 @@ use crate::{AppState, AppWindow};
 pub mod appearance;
 #[cfg(feature = "displays")]
 pub mod displays;
+#[cfg(feature = "fingerprint")]
+pub mod fingerprint;
 #[cfg(feature = "help")]
 pub mod help;
 pub mod more;
@@ -78,6 +80,8 @@ pub fn attach(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     crate::admin::attach(ui, state);
     #[cfg(feature = "users")]
     users::attach(ui, state);
+    #[cfg(feature = "fingerprint")]
+    fingerprint::attach(ui, state);
     #[cfg(feature = "system")]
     system::attach(ui, state);
     more::attach(ui, state);
@@ -103,6 +107,14 @@ pub fn enter_section(ui: &AppWindow, state: &Rc<RefCell<AppState>>, section: i32
     #[cfg(feature = "users")]
     if section == USERS {
         users::enter(ui, state);
+    }
+    // Fingerprint is a section of Users: look for the reader on the way in,
+    // and stop any scan on the way out so the reader is released.
+    #[cfg(feature = "fingerprint")]
+    if section == USERS {
+        fingerprint::enter(ui, state);
+    } else {
+        fingerprint::leave(ui, state);
     }
     #[cfg(feature = "system")]
     if section == SYSTEM {

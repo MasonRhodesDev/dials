@@ -36,6 +36,11 @@ Recommends:     lmtt
 # Users page writes (read-only without it); polkit's pkexec for groups.
 Recommends:     accountsservice
 Recommends:     polkit
+# Fingerprint section of Users; hidden without fprintd and a reader. Suggests,
+# not Recommends: most machines have no reader. fprintd-pam is what makes
+# logins and sudo accept the enrolled fingers.
+Suggests:       fprintd
+Suggests:       fprintd-pam
 
 %description
 Slint desktop settings application. Displays and Power edit hyprstate's

@@ -19,7 +19,8 @@ checkdepends=('desktop-file-utils')
 optdepends=('hyprstate: display profile apply and power overrides'
             'lmtt: wallpaper selection in Displays and the Appearance page'
             'accountsservice: Users page (read-only without it)'
-            'polkit: authorization for Users and System changes')
+            'polkit: authorization for Users and System changes'
+            'fprintd: fingerprint section of Users (enroll, test, delete; PAM status)')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('3cafd93bcd497c8a16a947dd82de22a5c5eac76c799eafd5408ef4fd0a261f6a')
 
