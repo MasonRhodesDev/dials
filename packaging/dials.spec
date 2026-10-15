@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.7
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, users, system and a settings hub
 License:        MIT
@@ -107,6 +107,23 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Thu Oct 15 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.5.0-1
+- Users page: accounts (create, full name, picture, administrator, disable
+  login, password, delete with or without the home directory), group
+  membership, and groups you make, through AccountsService and pkexec'd
+  shadow tools. Changing your own password as a standard user runs passwd.
+- System page: hostname, device name, time zone, NTP, language and keyboard
+  layout through hostnamed, timedated and localed; keyboard options survive a
+  layout change.
+- Every Users and System change is authorized by polkit through the
+  session's agent; dials never runs as root. Recommends accountsservice and
+  polkit.
+- Displays: Save writes to the shared /etc/monitor-profiles whenever it is
+  writable, so the login screen sees the change; the editor says whether a
+  profile is yours only or shared.
+- Wrapped text takes its minimum height from slint-kit.
+- tests/qa: hypr-qa scenarios for every Users and System write, run in a VM.
+
 * Wed Oct 14 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.7-1
 - Displays inspector: the wallpaper field's note and path no longer get the
   "Match / advanced" disclosure drawn over them, and the Choose button stays
