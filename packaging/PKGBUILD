@@ -9,15 +9,17 @@
 pkgname=dials
 pkgver=0.4.7
 pkgrel=1
-pkgdesc="Desktop settings: displays, power, and a hub for other settings tools"
+pkgdesc="Desktop settings: displays, power, users, system and a settings hub"
 arch=('x86_64' 'aarch64')
 url="https://github.com/MasonRhodesDev/dials"
 license=('MIT')
-depends=('gcc-libs' 'libxkbcommon' 'mesa' 'fontconfig' 'wayland')
+depends=('gcc-libs' 'libxkbcommon' 'mesa' 'fontconfig' 'wayland' 'libxcrypt')
 makedepends=('cargo' 'git' 'clang' 'python' 'ninja' 'cmake' 'pkgconf' 'fontconfig')
 checkdepends=('desktop-file-utils')
 optdepends=('hyprstate: display profile apply and power overrides'
-            'lmtt: wallpaper selection in Displays and the Appearance page')
+            'lmtt: wallpaper selection in Displays and the Appearance page'
+            'accountsservice: Users page (read-only without it)'
+            'polkit: authorization for Users and System changes')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('3cafd93bcd497c8a16a947dd82de22a5c5eac76c799eafd5408ef4fd0a261f6a')
 

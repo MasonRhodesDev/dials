@@ -1121,6 +1121,7 @@ dependencies = [
  "async-io",
  "hyprstate-fsm",
  "image",
+ "libc",
  "lmtt-core",
  "monitor-profiles",
  "serde",
@@ -1131,6 +1132,7 @@ dependencies = [
  "toml_edit 0.25.13+spec-1.1.0",
  "url",
  "xdg-paths",
+ "zbus 5.19.0",
 ]
 
 [[package]]

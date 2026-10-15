@@ -1,6 +1,6 @@
 //! Page modules. Each core-family integration (hyprstate, monitor-profiles,
-//! lmtt and the appearance registry) is an in-process module behind a cargo
-//! feature: it owns its state, its Slint callbacks and its IO, and reaches
+//! lmtt and the appearance registry) and each system-service page (Users,
+//! System) is an in-process module behind a cargo feature: it owns its state, its Slint callbacks and its IO, and reaches
 //! other pages only through the hooks below. A build without a feature drops
 //! that page and its crates. Third-party tools are never pages: the More page
 //! launches them in their own window.
@@ -18,6 +18,10 @@ pub mod help;
 pub mod more;
 #[cfg(feature = "power")]
 pub mod power;
+#[cfg(feature = "system")]
+pub mod system;
+#[cfg(feature = "users")]
+pub mod users;
 #[cfg(feature = "wallpaper")]
 pub mod wallpaper;
 
@@ -29,6 +33,10 @@ pub const HELP: i32 = 2;
 pub const MORE: i32 = 3;
 #[cfg_attr(not(feature = "appearance"), allow(dead_code))]
 pub const APPEARANCE: i32 = 4;
+#[cfg_attr(not(feature = "users"), allow(dead_code))]
+pub const USERS: i32 = 5;
+#[cfg_attr(not(feature = "system"), allow(dead_code))]
+pub const SYSTEM: i32 = 6;
 
 /// Show the toolbar buttons for the pages this build has and the machine
 /// can use; returns the section to open first.
@@ -41,6 +49,8 @@ pub fn configure_toolbar(ui: &AppWindow) -> i32 {
     ui.set_page_power(cfg!(feature = "power"));
     ui.set_page_help(cfg!(feature = "help"));
     ui.set_page_appearance(cfg!(feature = "appearance"));
+    ui.set_page_users(cfg!(feature = "users"));
+    ui.set_page_system(cfg!(feature = "system"));
     if displays {
         DISPLAYS
     } else if cfg!(feature = "power") {
@@ -64,6 +74,12 @@ pub fn attach(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     wallpaper::attach(ui, state);
     #[cfg(feature = "appearance")]
     appearance::attach(ui, state);
+    #[cfg(feature = "admin")]
+    crate::admin::attach(ui, state);
+    #[cfg(feature = "users")]
+    users::attach(ui, state);
+    #[cfg(feature = "system")]
+    system::attach(ui, state);
     more::attach(ui, state);
 }
 
@@ -83,6 +99,25 @@ pub fn enter_section(ui: &AppWindow, state: &Rc<RefCell<AppState>>, section: i32
     #[cfg(feature = "appearance")]
     if section == APPEARANCE {
         appearance::enter(ui, state);
+    }
+    #[cfg(feature = "users")]
+    if section == USERS {
+        users::enter(ui, state);
+    }
+    #[cfg(feature = "system")]
+    if section == SYSTEM {
+        system::enter(ui, state);
+    }
+}
+
+/// The admin worker finished something; hand it to the page it belongs to.
+#[cfg(feature = "admin")]
+pub fn admin_event(ui: &AppWindow, state: &Rc<RefCell<AppState>>, event: crate::admin::Event) {
+    match event {
+        #[cfg(feature = "users")]
+        crate::admin::Event::Users(e) => users::on_event(ui, state, e),
+        #[cfg(feature = "system")]
+        crate::admin::Event::System(e) => system::on_event(ui, state, e),
     }
 }
 

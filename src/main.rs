@@ -1,6 +1,8 @@
 //! dials — desktop settings. One window; each core-family integration is a
 //! page module behind a cargo feature (see `pages`), and the More page
 //! launches every other settings tool from its XDG desktop entry.
+#[cfg(feature = "admin")]
+mod admin;
 mod entries;
 #[cfg(feature = "hyprstate")]
 mod hyprstate;
@@ -28,6 +30,13 @@ pub struct AppState {
     pub wallpaper: pages::wallpaper::State,
     #[cfg(feature = "appearance")]
     pub appearance: pages::appearance::State,
+    /// Worker for Users and System writes (started on first use).
+    #[cfg(feature = "admin")]
+    pub admin: admin::Client,
+    #[cfg(feature = "users")]
+    pub users: pages::users::State,
+    #[cfg(feature = "system")]
+    pub system: pages::system::State,
     /// External settings tools (More page), in display order.
     pub entries: Vec<entries::Entry>,
 }
@@ -37,9 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
         None => {}
         Some("--entries") => return pages::more::print_entries(),
+        #[cfg(feature = "system")]
+        Some("--system") => return pages::system::print_system(),
         Some("--help" | "-h") => {
             println!(
-                "usage: dials [--entries]\n  --entries  list the settings tools the More page would show, then exit"
+                "usage: dials [--entries | --system]\n  --entries  list the settings tools the More page would show, then exit\n  --system   print what the System page reads from systemd, then exit"
             );
             return Ok(());
         }
@@ -63,6 +74,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallpaper: Default::default(),
         #[cfg(feature = "appearance")]
         appearance: Default::default(),
+        #[cfg(feature = "admin")]
+        admin: admin::Client::new(&ui),
+        #[cfg(feature = "users")]
+        users: Default::default(),
+        #[cfg(feature = "system")]
+        system: Default::default(),
         entries: Vec::new(),
     }));
 
@@ -96,6 +113,9 @@ mod idle_tests {
         include_str!("pages/help/mod.rs"),
         include_str!("pages/wallpaper/mod.rs"),
         include_str!("pages/appearance/mod.rs"),
+        include_str!("pages/users/mod.rs"),
+        include_str!("pages/system/mod.rs"),
+        include_str!("admin/mod.rs"),
         include_str!("hyprstate/mod.rs"),
     ];
 

@@ -1,0 +1,580 @@
+# Users page write paths in a hypr-qa guest (plain-hyprland: AccountsService,
+# polkit-gnome, user qa/qa in wheel). Every change goes through polkit: the
+# setup rule makes each action ask (no auth_admin_keep), so each write below is
+# followed by a prompt step that fails when no dialog opened, the answer, and a
+# check of the guest's own records.
+#
+#   tests/qa/run users.toml
+#
+# Coordinates are guest pixels at 1280x800 with dials tiled full screen
+# (window 22,22 1236x756). "bottom" positions are after scrolling the page to
+# its end, which only depend on what the page holds at that point.
+
+name     = "dials-users"
+profile  = "plain-hyprland"
+snapshot = "session-ready"
+stop_on_fail = true
+
+[[setup]]
+push = { src = "dials", dst = "/tmp/dials", mode = "0755" }
+
+[[setup]]
+session = "sudo install -m 755 /tmp/dials /usr/local/bin/dials"
+
+[[setup]]  # every action prompts, so the steps below don't depend on polkit's 5-minute keep
+session = '''echo 'polkit.addRule(function (a, s) { if (/^org\.freedesktop\.(accounts\.|policykit\.exec)/.test(a.id)) return polkit.Result.AUTH_ADMIN; });' | sudo tee /etc/polkit-1/rules.d/10-dials-qa.rules >/dev/null'''
+
+[[setup]]  # an image to use as a picture, outside /usr/share so AccountsService copies it
+session = "cp /usr/share/pixmaps/archlinux-logo.png /home/qa/face.png"
+
+[[setup]]
+session = '''hyprctl dispatch 'hl.dsp.exec_cmd("dials")' && for i in $(seq 60); do hyprctl clients | grep -q 'title: Dials' && sleep 4 && exit 0; sleep 1; done; exit 1'''
+
+# The window opened under a still pointer: move once so dials gets pointer focus.
+[[step]]
+id = "pointer-in"
+do = { vmkit = ["move", "600", "300"] }
+settle_ms = 300
+
+[[step]]
+id = "open-users"
+do = { vmkit = ["tap", "365", "56"] }
+settle_ms = 1500
+
+  [[step.expect]]
+  at = "+800ms..+1500ms"
+  check = "ocr"
+  region = [22, 120, 800, 60]
+  text = "Accounts on this computer"
+
+# ---- create dialstest ------------------------------------------------------
+
+[[step]]
+id = "add-user"
+do = { vmkit = ["tap", "162", "103"] }
+settle_ms = 1500
+
+  [[step.expect]]
+  at = "+800ms..+1500ms"
+  check = "ocr"
+  region = [40, 180, 400, 30]
+  text = "New account"
+
+[[step]]
+id = "focus-full-name"
+do = { vmkit = ["tap", "640", "246"] }
+settle_ms = 800
+
+[[step]]
+id = "type-full-name"
+do = { vmkit = ["type", "Dials Test"] }
+settle_ms = 800
+
+[[step]]
+id = "focus-username"
+do = { vmkit = ["tap", "640", "308"] }
+settle_ms = 800
+
+[[step]]
+id = "type-username"
+do = { vmkit = ["type", "dialstest"] }
+settle_ms = 800
+
+[[step]]
+id = "focus-password"
+do = { vmkit = ["tap", "640", "428"] }
+settle_ms = 800
+
+[[step]]
+id = "type-password"
+do = { vmkit = ["type", "dialspw1"] }
+settle_ms = 800
+
+[[step]]
+id = "focus-confirm"
+do = { vmkit = ["tap", "640", "490"] }
+settle_ms = 800
+
+[[step]]
+id = "type-confirm"
+do = { vmkit = ["type", "dialspw1"] }
+settle_ms = 1500
+
+  [[step.expect]]
+  at = "+1000ms..+1500ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [54, 228, 600, 96]
+  regex = "Dials Test[\\s\\S]*dialstest"
+
+[[step]]
+id = "create"
+do = { vmkit = ["tap", "177", "534"] }
+
+[[step]]
+id = "create-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+  [[step.expect]]
+  at = "+0ms..+400ms"
+  anchor = "ack"
+  check = "ocr"
+  text = "Authentication is required"
+
+[[step]]
+id = "create-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "password-prompt"     # CreateUser, then SetPassword: a second action
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "password-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 4000
+
+[[step]]
+id = "created"
+do = { session = '''getent passwd dialstest | grep -q ':Dials Test:/home/dialstest:' && sudo grep -q '^dialstest:\$y\$' /etc/shadow && ! id -nG dialstest | grep -qw wheel'''}
+
+  [[step.expect]]          # selected in the list, detail shows the new account
+  at = "+0ms"
+  check = "ocr"
+  region = [380, 180, 700, 40]
+  text = "Dials Test (dialstest)"
+
+# ---- edit it -----------------------------------------------------------------
+
+[[step]]
+id = "focus-rename"
+do = { vmkit = ["tap", "775", "256"] }
+settle_ms = 600
+
+[[step]]
+id = "select-name"
+do = { vmkit = ["keys", "ctrl", "a"] }
+settle_ms = 400
+
+[[step]]
+id = "type-rename"
+do = { vmkit = ["type", "Dials Test 2"] }
+settle_ms = 1000
+
+[[step]]
+id = "apply-rename"
+do = { vmkit = ["tap", "1209", "256"] }
+
+[[step]]
+id = "rename-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "rename-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "renamed"
+do = { session = "getent passwd dialstest | grep -q ':Dials Test 2:'" }
+
+[[step]]
+id = "focus-picture"
+do = { vmkit = ["tap", "775", "318"] }
+settle_ms = 600
+
+[[step]]
+id = "type-picture"
+do = { vmkit = ["type", "/home/qa/face.png"] }
+settle_ms = 1000
+
+[[step]]
+id = "apply-picture"
+do = { vmkit = ["tap", "1209", "318"] }
+
+[[step]]
+id = "picture-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "picture-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "picture-copied"      # AccountsService copies a picture from a home dir
+do = { session = "sudo cmp -s /home/qa/face.png /var/lib/AccountsService/icons/dialstest" }
+
+[[step]]
+id = "toggle-admin"
+do = { vmkit = ["tap", "391", "382"] }
+
+[[step]]
+id = "admin-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "admin-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "is-admin"
+do = { session = "id -nG dialstest | grep -qw wheel" }
+
+[[step]]
+id = "toggle-lock"
+do = { vmkit = ["tap", "391", "418"] }
+
+[[step]]
+id = "lock-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "lock-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "is-locked"
+do = { session = "sudo passwd -S dialstest | grep -q ' L '" }
+
+  [[step.expect]]          # the list row says so
+  at = "+0ms"
+  check = "ocr"
+  region = [60, 240, 300, 34]
+  text = "locked"
+
+  [[step.expect]]          # and the Disable login box is ticked (the control for scroll-top#2)
+  at = "+0ms"
+  check = "pixel"
+  region = [384, 411, 14, 14]
+  color = "#a6da95"
+  tolerance = 60
+  min_fraction = 0.3
+
+[[step]]
+id = "toggle-video"
+do = { vmkit = ["tap", "391", "537"] }
+
+[[step]]
+id = "video-prompt"        # pkexec gpasswd
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "video-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "in-video"
+do = { session = "id -nG dialstest | grep -qw video" }
+
+[[step]]
+id = "untoggle-video"
+do = { vmkit = ["tap", "391", "537"] }
+
+[[step]]
+id = "untoggle-video-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "untoggle-video-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "untoggle-video-done"
+do = { session = "! id -nG dialstest | grep -qw video" }
+
+[[step]]
+id = "untoggle-admin"
+do = { vmkit = ["tap", "391", "382"] }
+
+[[step]]
+id = "untoggle-admin-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "untoggle-admin-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "untoggle-admin-done"
+do = { session = "! id -nG dialstest | grep -qw wheel" }
+
+# ---- password: set it, which also unlocks ------------------------------------
+
+[[step]]
+id = "scroll-bottom"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "focus-new-password"
+do = { vmkit = ["tap", "810", "418"] }
+settle_ms = 600
+
+[[step]]
+id = "type-new-password"
+do = { vmkit = ["type", "newpw123"] }
+settle_ms = 600
+
+[[step]]
+id = "focus-confirm-password"
+do = { vmkit = ["tap", "810", "480"] }
+settle_ms = 600
+
+[[step]]
+id = "type-confirm-password"
+do = { vmkit = ["type", "newpw123"] }
+settle_ms = 1000
+
+[[step]]
+id = "change-password"
+do = { vmkit = ["tap-text", "Change password"] }
+
+[[step]]
+id = "change-password-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "change-password-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "password-set"        # the new hash verifies, and AccountsService unlocked the account
+do = { session = '''h=$(sudo grep '^dialstest:' /etc/shadow | cut -d: -f2) && python3 -c 'import ctypes, sys; c = ctypes.CDLL("libcrypt.so.2"); c.crypt.restype = ctypes.c_char_p; h = sys.argv[1].encode(); sys.exit(c.crypt(b"newpw123", h) != h)' "$h" && ! sudo passwd -S dialstest | grep -q ' L ' ''' }
+
+[[step]]
+id = "scroll-top"
+do = { vmkit = ["scroll", "up", "20"] }
+settle_ms = 1200
+
+  [[step.expect]]          # the Disable login box follows the unlock (was stale before)
+  at = "+800ms..+1200ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [60, 240, 300, 34]
+  text = "locked"
+  not = true
+
+  [[step.expect]]
+  at = "+800ms..+1200ms"
+  anchor = "ack"
+  check = "pixel"
+  region = [384, 411, 14, 14]
+  color = "#a6da95"
+  tolerance = 60
+  min_fraction = 0.3
+  not = true
+
+# ---- disable and re-enable login with the checkbox ---------------------------
+
+[[step]]
+id = "relock"
+do = { vmkit = ["tap", "391", "418"] }
+
+[[step]]
+id = "relock-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "relock-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "relock-done"
+do = { session = "sudo passwd -S dialstest | grep -q ' L '" }
+
+[[step]]
+id = "unlock"
+do = { vmkit = ["tap", "391", "418"] }
+
+[[step]]
+id = "unlock-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "unlock-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "unlock-done"
+do = { session = "! sudo passwd -S dialstest | grep -q ' L '" }
+
+# ---- groups: create, cancel a delete, delete ---------------------------------
+
+[[step]]
+id = "scroll-bottom-2"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "focus-group-name"
+do = { vmkit = ["tap", "578", "679"] }
+settle_ms = 600
+
+[[step]]
+id = "type-group-name"
+do = { vmkit = ["type", "dialsgroup"] }
+settle_ms = 800
+
+[[step]]
+id = "create-group"
+do = { vmkit = ["tap-text", "Create group"] }
+
+[[step]]
+id = "create-group-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "create-group-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "group-created"
+do = { session = "getent group dialsgroup" }
+
+[[step]]
+id = "scroll-bottom-3"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "delete-group"
+do = { vmkit = ["tap", "151", "637"] }
+settle_ms = 800
+
+[[step]]
+id = "scroll-to-confirm"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+  [[step.expect]]
+  at = "+800ms..+1200ms"
+  anchor = "ack"
+  check = "ocr"
+  text = "Delete group dialsgroup?"
+
+[[step]]
+id = "confirm-delete-group"
+do = { vmkit = ["tap", "1190", "619"] }
+
+[[step]]
+id = "cancel-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "cancel"
+do = { vmkit = ["keys", "esc"] }
+settle_ms = 3000
+
+  [[step.expect]]
+  at = "+2000ms..+3000ms"
+  check = "ocr"
+  region = [22, 600, 1236, 178]
+  text = "Not authorized"
+
+[[step]]
+id = "cancel-changed-nothing"
+do = { session = "getent group dialsgroup && ! hyprctl clients | grep -q 'title: Authenticate'" }
+
+[[step]]
+id = "scroll-bottom-4"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "delete-group-again"
+do = { vmkit = ["tap", "151", "637"] }
+settle_ms = 800
+
+[[step]]
+id = "scroll-to-confirm-2"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "confirm-delete-group-2"
+do = { vmkit = ["tap", "1190", "619"] }
+
+[[step]]
+id = "delete-group-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "delete-group-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 3000
+
+[[step]]
+id = "group-deleted"
+do = { session = "! getent group dialsgroup" }
+
+# ---- delete the account with its home ---------------------------------------
+
+[[step]]
+id = "scroll-bottom-5"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+[[step]]
+id = "delete-account"
+do = { vmkit = ["tap", "454", "572"] }
+settle_ms = 800
+
+[[step]]
+id = "scroll-to-account-confirm"
+do = { vmkit = ["scroll", "down", "20"] }
+settle_ms = 1200
+
+  [[step.expect]]
+  at = "+800ms..+1200ms"
+  anchor = "ack"
+  check = "ocr"
+  text = "Delete dialstest?"
+
+[[step]]
+id = "tick-remove-home"
+do = { vmkit = ["tap-text", "Also remove the home directory"] }
+settle_ms = 600
+
+[[step]]
+id = "confirm-delete-account"
+do = { vmkit = ["tap", "1190", "541"] }
+
+[[step]]
+id = "delete-account-prompt"
+do = { session = "for i in $(seq 40); do hyprctl clients | grep -q 'title: Authenticate' && exit 0; sleep 0.25; done; exit 1" }
+settle_ms = 500
+
+[[step]]
+id = "delete-account-answer"
+do = { vmkit = ["type", "qa\n"] }
+settle_ms = 4000
+
+[[step]]
+id = "account-deleted"
+do = { session = "! getent passwd dialstest && ! test -e /home/dialstest && ! hyprctl clients | grep -q 'title: Authenticate'" }
