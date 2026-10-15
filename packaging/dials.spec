@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.5.0
+Version:        0.5.1
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, users, system and a settings hub
 License:        MIT
@@ -107,6 +107,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Thu Oct 15 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.5.1-1
+- Users and System: when a password prompt isn't answered within systemd's
+  25 s polkit wait, the status line says so and to try again, instead of
+  "Method call timed out".
+
 * Thu Oct 15 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.5.0-1
 - Users page: accounts (create, full name, picture, administrator, disable
   login, password, delete with or without the home directory), group
