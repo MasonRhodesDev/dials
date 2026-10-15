@@ -19,7 +19,7 @@ slint = { version = "=1.17.1", default-features = false, features = [
     "accessibility",
     "compat-1-2",
 ] }
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "3581f653546ae1e187bc3f2bb20c54019d0a202a" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Same source string lmtt-core pins (short rev, .git suffix): one compiled copy, and the
@@ -56,4 +56,4 @@ appearance = ["dep:lmtt-core", "dep:toml_edit"]
 
 [build-dependencies]
 slint-build = "=1.17.1"
-slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "ccd7397c3da83ff835d6295d6ec3841fc32c8bac" }
+slint-kit = { git = "https://github.com/MasonRhodesDev/slint-kit", rev = "3581f653546ae1e187bc3f2bb20c54019d0a202a" }
