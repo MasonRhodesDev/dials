@@ -1,0 +1,245 @@
+// Fingerprint: a section of the Users detail for your own account, fronting
+// fprintd (fingerprint page module). Shown only when fprintd has a reader.
+import { Theme } from "theme.slint";
+import {
+    KitButton, KitConfirm, KitBadge, KitListRow,
+    KitMuted, KitLabel, KitWarning, KitVStack, KitHStack, Panel
+} from "widgets.slint";
+
+export struct FingerSlot {
+    index: int,
+    label: string,
+    enrolled: bool,
+}
+
+export struct PamRow {
+    label: string,
+    on: bool,
+    badge: string,
+    detail: string,
+}
+
+/// Fingerprint state; Rust sets it via `global::<Fingerprint>()`.
+export global Fingerprint {
+    /// fprintd is installed (its activation file exists).
+    in-out property <bool> available: false;
+    /// The account dials runs as; the section shows on its detail only.
+    in-out property <string> user: "";
+    /// A reader was found; until then (and on machines without one) the
+    /// section stays hidden. `dials --fingerprint` says why.
+    in-out property <bool> ready: false;
+    in-out property <string> reader: "";
+    in-out property <bool> swipe: false;
+    in-out property <[FingerSlot]> left: [];
+    in-out property <[FingerSlot]> right: [];
+    in-out property <int> enrolled-count: 0;
+    in-out property <int> selected: -1;
+    in-out property <string> selected-label: "";
+    in-out property <bool> selected-enrolled: false;
+    /// "" | enroll | verify | busy (a one-shot call is running)
+    in-out property <string> mode: "";
+    in-out property <string> finger: "";
+    in-out property <int> stages: 0;
+    in-out property <int> stage: 0;
+    in-out property <string> feedback: "";
+    /// progress | retry | done | failed
+    in-out property <string> tone: "progress";
+    in-out property <bool> confirm-delete: false;
+    in-out property <bool> confirm-delete-all: false;
+    in-out property <bool> pam-module: true;
+    in-out property <[PamRow]> pam-rows: [];
+    in-out property <string> pam-note: "";
+    in-out property <string> status-text: "";
+
+    callback select(int);
+    callback enroll();
+    callback verify();
+    callback cancel();
+    callback delete();
+    callback delete-all();
+    /// The detail switched accounts.
+    callback account-changed(string);
+    /// Worker events are queued; drain them (invoked from the worker).
+    callback wake();
+}
+
+component Progress inherits Panel {
+    KitVStack {
+        gap: "form";
+        padding: Theme.space-md;
+        KitLabel {
+            text: Fingerprint.mode == "enroll"
+                ? "Enrolling " + Fingerprint.finger
+                : "Testing";
+        }
+        KitMuted {
+            text: Fingerprint.mode == "verify"
+                ? (Fingerprint.swipe ? "Swipe any enrolled finger on the reader." : "Touch the reader with any enrolled finger.")
+                : (Fingerprint.swipe ? "Swipe the finger across the reader, several times." : "Touch the reader with the finger, lift, and repeat.");
+            wrap-text: true;
+        }
+        if Fingerprint.mode == "enroll" && Fingerprint.stages > 0: HorizontalLayout {
+            spacing: Theme.space-2xs;
+            for i in Fingerprint.stages: Rectangle {
+                height: 8px;
+                border-radius: 4px;
+                background: i < Fingerprint.stage ? Theme.accent : Theme.surface-container-highest;
+            }
+        }
+        if Fingerprint.mode == "enroll" && Fingerprint.stages <= 0 && Fingerprint.stage > 0: KitMuted {
+            text: Fingerprint.stage + " scans so far";
+        }
+        if Fingerprint.feedback != "": Text {
+            text: Fingerprint.feedback;
+            wrap: word-wrap;
+            min-height: self.preferred-height;
+            font-size: Theme.font-body;
+            color: Fingerprint.tone == "failed" ? Theme.danger
+                : Fingerprint.tone == "retry" ? Theme.warning-fg
+                : Fingerprint.tone == "done" ? Theme.accent
+                : Theme.fg;
+        }
+        KitHStack {
+            gap: "form";
+            KitButton {
+                text: "Cancel";
+                clicked => { Fingerprint.cancel(); }
+            }
+        }
+    }
+}
+
+component Hand inherits VerticalLayout {
+    in property <string> title;
+    in property <[FingerSlot]> fingers;
+    spacing: Theme.space-2xs;
+    alignment: start;
+    horizontal-stretch: 1;
+    KitMuted { text: root.title; }
+    for f in root.fingers: KitListRow {
+        title: f.label;
+        meta: f.enrolled ? "Enrolled" : "";
+        active: Fingerprint.selected == f.index;
+        enabled: Fingerprint.mode == "";
+        clicked => { Fingerprint.select(f.index); }
+    }
+}
+
+component Section inherits KitVStack {
+    gap: "form";
+
+    KitLabel { text: "Fingerprint"; }
+
+    KitVStack {
+        gap: "form";
+        KitMuted {
+            text: Fingerprint.reader + " · "
+                + (Fingerprint.enrolled-count == 0 ? "no fingers enrolled"
+                   : Fingerprint.enrolled-count == 1 ? "1 finger enrolled"
+                   : Fingerprint.enrolled-count + " fingers enrolled");
+            wrap-text: true;
+        }
+        HorizontalLayout {
+            spacing: Theme.space-lg;
+            Hand { title: "Left hand"; fingers: Fingerprint.left; }
+            Hand { title: "Right hand"; fingers: Fingerprint.right; }
+        }
+
+        if Fingerprint.mode == "enroll" || Fingerprint.mode == "verify": Progress { }
+
+        if (Fingerprint.mode == "" || Fingerprint.mode == "busy") && !Fingerprint.confirm-delete && !Fingerprint.confirm-delete-all: KitHStack {
+            gap: "form";
+            if Fingerprint.selected >= 0 && !Fingerprint.selected-enrolled: KitButton {
+                text: "Enroll " + Fingerprint.selected-label;
+                primary: true;
+                enabled: Fingerprint.mode == "";
+                clicked => { Fingerprint.enroll(); }
+            }
+            if Fingerprint.selected >= 0 && Fingerprint.selected-enrolled: KitButton {
+                text: "Delete " + Fingerprint.selected-label + "…";
+                danger: true;
+                enabled: Fingerprint.mode == "";
+                clicked => { Fingerprint.confirm-delete = true; }
+            }
+            if Fingerprint.selected < 0: KitMuted { text: "Pick a finger to enroll or delete it."; }
+            KitButton {
+                text: "Test";
+                enabled: Fingerprint.mode == "" && Fingerprint.enrolled-count > 0;
+                clicked => { Fingerprint.verify(); }
+            }
+            if Fingerprint.enrolled-count > 1: KitButton {
+                text: "Delete all…";
+                danger: true;
+                enabled: Fingerprint.mode == "";
+                clicked => { Fingerprint.confirm-delete-all = true; }
+            }
+        }
+        if Fingerprint.confirm-delete && Fingerprint.selected >= 0: KitConfirm {
+            title: "Delete " + Fingerprint.selected-label + "?";
+            message: "The print is removed from fprintd. You can enroll the finger again later.";
+            confirmed => {
+                Fingerprint.confirm-delete = false;
+                Fingerprint.delete();
+            }
+            cancelled => { Fingerprint.confirm-delete = false; }
+        }
+        if Fingerprint.confirm-delete-all: KitConfirm {
+            title: "Delete every enrolled finger?";
+            message: "Fingerprint sign-in stops working until you enroll again.";
+            confirmed => {
+                Fingerprint.confirm-delete-all = false;
+                Fingerprint.delete-all();
+            }
+            cancelled => { Fingerprint.confirm-delete-all = false; }
+        }
+    }
+
+    KitVStack {
+        gap: "tight";
+        KitLabel { text: "Where a fingerprint is accepted"; }
+        if !Fingerprint.pam-module: KitWarning {
+            text: "pam_fprintd isn't installed (on Fedora: the fprintd-pam package), so no login or prompt will ask for a fingerprint.";
+            wrap: word-wrap;
+        }
+        for row in Fingerprint.pam-rows: HorizontalLayout {
+            spacing: Theme.space-sm;
+            KitLabel {
+                text: row.label;
+                width: 220px;
+                vertical-alignment: center;
+            }
+            KitBadge {
+                text: row.badge;
+                tone: row.on ? "accent" : "muted";
+            }
+            KitMuted {
+                text: row.detail;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        if Fingerprint.pam-note != "": KitMuted {
+            text: Fingerprint.pam-note;
+            wrap-text: true;
+        }
+        KitMuted {
+            text: "From /etc/pam.d, read-only. dials doesn't change PAM.";
+            wrap-text: true;
+        }
+    }
+
+    if Fingerprint.status-text != "": KitMuted {
+        text: Fingerprint.status-text;
+        wrap-text: true;
+    }
+}
+
+/// Placed in the Users detail. Shows the section on your own account, once
+/// fprintd has a reader, and
+/// tells Rust when the detail switches accounts, so a running scan stops.
+export component FingerprintSlot inherits VerticalLayout {
+    in property <string> account;
+    padding: 0;
+    changed account => { Fingerprint.account-changed(self.account); }
+    if Fingerprint.available && Fingerprint.ready && root.account == Fingerprint.user: Section { }
+}
