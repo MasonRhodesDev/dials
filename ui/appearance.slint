@@ -118,7 +118,10 @@ export component AppearancePage inherits VerticalLayout {
                         edited(t) => { root.field-text(f.id, t); }
                     }
                 }
-                KitMuted { text: f.description; wrap-text: true; }
+                KitMuted {
+                    text: f.description;
+                    wrap-text: true;
+                }
             }
 
             KitHStack {

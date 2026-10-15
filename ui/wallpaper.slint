@@ -63,10 +63,16 @@ export component WallpaperField inherits VerticalLayout {
                 spacing: 2px;
                 alignment: center;
                 KitLabel { text: root.name == "" ? "Not set" : root.name; }
-                KitMuted { text: root.path; wrap-text: true; }
+                KitMuted {
+                    text: root.path;
+                    wrap-text: true;
+                }
             }
         }
-        KitMuted { text: root.note; wrap-text: true; }
+        KitMuted {
+            text: root.note;
+            wrap-text: true;
+        }
         HorizontalLayout {
             padding: 0;
             spacing: Theme.space-sm;

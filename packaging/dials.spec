@@ -4,7 +4,7 @@
 %bcond_without check
 
 Name:           dials
-Version:        0.4.6
+Version:        0.4.7
 Release:        1%{?dist}
 Summary:        Desktop settings: displays, power, users, system and a settings hub
 License:        MIT
@@ -67,9 +67,9 @@ git = "https://github.com/MasonRhodesDev/hyprstate"
 rev = "746bbd2608f19e7e9ac5113131710f54f6c98f9e"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=ec04732b4b19117415ed06de14c95c8cac579be0"]
+[source."git+https://github.com/MasonRhodesDev/slint-kit?rev=3581f653546ae1e187bc3f2bb20c54019d0a202a"]
 git = "https://github.com/MasonRhodesDev/slint-kit"
-rev = "ec04732b4b19117415ed06de14c95c8cac579be0"
+rev = "3581f653546ae1e187bc3f2bb20c54019d0a202a"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/MasonRhodesDev/linux-multi-theme-toggle?rev=344529cd124c131da40409b152bc1604eebd53d0"]
@@ -107,6 +107,15 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dials.desktop
 %{_datadir}/applications/dials.desktop
 
 %changelog
+* Wed Oct 14 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.7-1
+- Displays inspector: the wallpaper field's note and path no longer get the
+  "Match / advanced" disclosure drawn over them, and the Choose button stays
+  inside the panel. Slint measures a conditional layout child at its
+  preferred width, so wrapped text inside one now pins its own height; the
+  same pin on the Appearance descriptions, Power sensors note, Help notes
+  and the More empty-state line.
+- The two entries tests that set and clear TERMINAL no longer race.
+
 * Tue Oct 13 2026 Mason Rhodes <mrhodesdev@gmail.com> - 0.4.6-1
 - Appearance page: lmtt's settings rendered from its own config schema, with
   option lists from lmtt-core's detectors. Dark/Light switches at once; Apply

@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "dials"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "appearance-profiles",
  "ashpd",
@@ -4738,7 +4738,7 @@ dependencies = [
 [[package]]
 name = "slint-kit"
 version = "0.2.0"
-source = "git+https://github.com/MasonRhodesDev/slint-kit?rev=ec04732b4b19117415ed06de14c95c8cac579be0#ec04732b4b19117415ed06de14c95c8cac579be0"
+source = "git+https://github.com/MasonRhodesDev/slint-kit?rev=3581f653546ae1e187bc3f2bb20c54019d0a202a#3581f653546ae1e187bc3f2bb20c54019d0a202a"
 dependencies = [
  "lmtt-core",
  "notify",

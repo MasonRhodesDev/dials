@@ -7,7 +7,7 @@
 # `makepkg --printsrcinfo > .SRCINFO` on every change).
 
 pkgname=dials
-pkgver=0.4.6
+pkgver=0.4.7
 pkgrel=1
 pkgdesc="Desktop settings: displays, power, users, system and a settings hub"
 arch=('x86_64' 'aarch64')
