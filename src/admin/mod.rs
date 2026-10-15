@@ -581,6 +581,12 @@ pub fn describe_dbus_error(name: &str, msg: Option<&str>) -> String {
         "InteractiveAuthorizationRequired" => {
             "Needs an administrator password, but no polkit agent is running.".into()
         }
+        // systemd's services wait 25 s for polkit, then answer "Method call
+        // timed out": the prompt sat too long and the password typed after
+        // that authorized nothing.
+        "NoReply" | "Timeout" | "TimedOut" => {
+            "The password prompt wasn't answered in time. Try again.".into()
+        }
         "ServiceUnknown" | "NameHasNoOwner" => {
             format!(
                 "Service unavailable{}",
@@ -610,6 +616,13 @@ mod tests {
                 None
             )
             .contains("no polkit agent")
+        );
+        assert!(
+            describe_dbus_error(
+                "org.freedesktop.DBus.Error.NoReply",
+                Some("Method call timed out")
+            )
+            .contains("wasn't answered in time")
         );
         assert_eq!(
             describe_dbus_error("org.freedesktop.timedate1.Error", Some("Invalid time zone")),
