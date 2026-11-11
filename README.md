@@ -26,6 +26,11 @@ sections:
   standard user sees only their own and changes their password through
   `passwd`. Group changes run `gpasswd` / `groupadd` / `groupdel` under
   `pkexec`, since AccountsService only manages the admin group.
+  On your own account, a **Fingerprint** section enrolls, tests and deletes
+  your fingers through [fprintd](https://fprint.freedesktop.org/), and shows
+  which PAM stacks (sudo, polkit, lock screens, login) accept a fingerprint.
+  It reads PAM and never changes it. The section stays hidden until fprintd
+  reports a reader; `dials --fingerprint` prints what it found.
 - **System** — hostname, time zone, automatic time, language and keyboard
   layout through systemd's hostnamed, timedated and localed.
 - **Help** — live graph of how hyprstate derives lid/power/display state.
@@ -90,7 +95,8 @@ feature (`src/pages`): `displays` (monitor-profiles, hyprctl), `power` and
 into Displays through the hooks in `src/pages/mod.rs`), `appearance` (lmtt's
 settings through lmtt-core and its config schema), `users` and `system`
 (AccountsService, systemd and polkit over zbus; they share one worker
-thread). A build without a
+thread), and `fingerprint` (fprintd over zbus, its own worker; a section
+of Users). A build without a
 feature drops that page and its crates; a page whose tool is missing at
 run time hides its toolbar button. `cargo build --no-default-features`
 leaves only More. Third-party tools never become pages: More launches them

@@ -43,7 +43,7 @@ libc = { version = "0.2", optional = true }
 [features]
 # Each core-family integration is a page module behind a feature (src/pages).
 # A build without one drops that page and its crates; More always remains.
-default = ["displays", "power", "help", "wallpaper", "appearance", "users", "system"]
+default = ["displays", "power", "help", "wallpaper", "appearance", "users", "system", "fingerprint"]
 # hyprstate daemon surface: telemetry client and policy types.
 hyprstate = ["dep:hyprstate-fsm"]
 # Displays: monitor-profiles editor on hyprctl.
@@ -65,6 +65,11 @@ admin = ["dep:zbus", "dep:libc"]
 users = ["admin"]
 # System: hostname, time zone, NTP, language and keyboard through systemd.
 system = ["admin"]
+# Fingerprint: a section of Users for your own fingers through fprintd
+# (enroll, test, delete), and where pam_fprintd is wired in (read-only).
+# Hidden without fprintd. Its own system-bus thread, not the admin worker:
+# an enrollment is a long signal-driven session.
+fingerprint = ["users"]
 
 [build-dependencies]
 slint-build = "=1.17.1"

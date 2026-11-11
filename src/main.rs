@@ -35,6 +35,8 @@ pub struct AppState {
     pub admin: admin::Client,
     #[cfg(feature = "users")]
     pub users: pages::users::State,
+    #[cfg(feature = "fingerprint")]
+    pub fingerprint: pages::fingerprint::State,
     #[cfg(feature = "system")]
     pub system: pages::system::State,
     /// External settings tools (More page), in display order.
@@ -48,9 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--entries") => return pages::more::print_entries(),
         #[cfg(feature = "system")]
         Some("--system") => return pages::system::print_system(),
+        #[cfg(feature = "fingerprint")]
+        Some("--fingerprint") => return pages::fingerprint::print_status(),
         Some("--help" | "-h") => {
             println!(
-                "usage: dials [--entries | --system]\n  --entries  list the settings tools the More page would show, then exit\n  --system   print what the System page reads from systemd, then exit"
+                "usage: dials [--entries | --system | --fingerprint]\n  --entries      list the settings tools the More page would show, then exit\n  --system       print what the System page reads from systemd, then exit\n  --fingerprint  print the fingerprint reader, enrolled fingers and PAM wiring, then exit"
             );
             return Ok(());
         }
@@ -78,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         admin: admin::Client::new(&ui),
         #[cfg(feature = "users")]
         users: Default::default(),
+        #[cfg(feature = "fingerprint")]
+        fingerprint: Default::default(),
         #[cfg(feature = "system")]
         system: Default::default(),
         entries: Vec::new(),
@@ -114,6 +120,8 @@ mod idle_tests {
         include_str!("pages/wallpaper/mod.rs"),
         include_str!("pages/appearance/mod.rs"),
         include_str!("pages/users/mod.rs"),
+        include_str!("pages/fingerprint/mod.rs"),
+        include_str!("pages/fingerprint/worker.rs"),
         include_str!("pages/system/mod.rs"),
         include_str!("admin/mod.rs"),
         include_str!("hyprstate/mod.rs"),
